@@ -26,12 +26,14 @@ bot = commands.Bot(
 
 @bot.event
 async def on_ready():
+      print("DEBUG: Bot is ready!")
     print(f"AI Assistant online: {bot.user}")
     print("Waiting for staff instructions...")
 
 
 @bot.event
 async def on_message(message):
+      print("DEBUG: Message event received!")
 
     # Ignore bots and direct messages
     if message.author.bot or message.guild is None:
