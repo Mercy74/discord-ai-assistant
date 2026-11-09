@@ -68,23 +68,25 @@ async def on_message(message):
         )
         return
 
+    
     try:
-start_time = time.perf_counter()
+        start_time = time.perf_counter()
 
-async with message.channel.typing():
-    answer = await asyncio.wait_for(
-        ask_gemini(prompt),
-        timeout=30
-    )
+        async with message.channel.typing():
+            answer = await asyncio.wait_for(
+                ask_gemini(prompt),
+                timeout=30
+            )
 
-elapsed = time.perf_counter() - start_time
-print(f"Gemini response time: {elapsed:.2f} seconds")
+        elapsed = time.perf_counter() - start_time
+        print(f"Gemini response time: {elapsed:.2f} seconds")
 
         await message.reply(
             answer[:1900],
             mention_author=False,
             allowed_mentions=discord.AllowedMentions.none()
         )
+
     except asyncio.TimeoutError:
         print("AI TIMEOUT: Gemini did not respond within 30 seconds.")
 
@@ -92,6 +94,7 @@ print(f"Gemini response time: {elapsed:.2f} seconds")
             "My AI service is taking too long to respond. Please try again.",
             mention_author=False
         )
+
     except Exception as error:
         print(f"AI ERROR TYPE: {type(error).__name__}")
         print(f"AI ERROR DETAILS: {repr(error)}")
@@ -102,7 +105,6 @@ print(f"Gemini response time: {elapsed:.2f} seconds")
             mention_author=False
         )
 
-    await bot.process_commands(message)
 
 
 if not DISCORD_TOKEN:
