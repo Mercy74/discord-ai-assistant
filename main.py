@@ -6,6 +6,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from ai_engine import ask_gemini
+from keep_alive import keep_alive
 
 # Load private environment variables
 load_dotenv()
@@ -94,4 +95,5 @@ async def on_message(message):
 if not DISCORD_TOKEN:
     raise RuntimeError("Missing DISCORD_TOKEN environment variable")
 
+keep_alive()
 bot.run(DISCORD_TOKEN)
