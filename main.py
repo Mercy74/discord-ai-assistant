@@ -1,5 +1,7 @@
 
 import os
+import asyncio
+import time
 
 import discord
 from discord.ext import commands
@@ -67,15 +69,29 @@ async def on_message(message):
         return
 
     try:
-        async with message.channel.typing():
-            answer = await ask_gemini(prompt)
+start_time = time.perf_counter()
+
+async with message.channel.typing():
+    answer = await asyncio.wait_for(
+        ask_gemini(prompt),
+        timeout=30
+    )
+
+elapsed = time.perf_counter() - start_time
+print(f"Gemini response time: {elapsed:.2f} seconds")
 
         await message.reply(
             answer[:1900],
             mention_author=False,
             allowed_mentions=discord.AllowedMentions.none()
         )
+    except asyncio.TimeoutError:
+        print("AI TIMEOUT: Gemini did not respond within 30 seconds.")
 
+        await message.reply(
+            "My AI service is taking too long to respond. Please try again.",
+            mention_author=False
+        )
     except Exception as error:
         print(f"AI ERROR TYPE: {type(error).__name__}")
         print(f"AI ERROR DETAILS: {repr(error)}")
