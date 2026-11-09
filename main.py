@@ -77,7 +77,8 @@ async def on_message(message):
         )
 
     except Exception as error:
-        print(f"AI error: {error}")
+        print(f"AI ERROR TYPE: {type(error).__name__}")
+        print(f"AI ERROR DETAILS: {repr(error)}")
 
         await message.reply(
             "I ran into an issue while contacting my AI service. "
