@@ -8,12 +8,10 @@ from dotenv import load_dotenv
 from ai_engine import ask_gemini
 from keep_alive import keep_alive
 
-# Load private environment variables
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# Discord configuration
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -26,25 +24,22 @@ bot = commands.Bot(
 
 @bot.event
 async def on_ready():
-      print("DEBUG: Bot is ready!")
+    print("DEBUG: Bot is ready!")
     print(f"AI Assistant online: {bot.user}")
     print("Waiting for staff instructions...")
 
 
 @bot.event
 async def on_message(message):
-      print("DEBUG: Message event received!")
+    print("DEBUG: Message event received!")
 
-    # Ignore bots and direct messages
     if message.author.bot or message.guild is None:
         return
 
-    # Only respond when directly mentioned
     if bot.user not in message.mentions:
         await bot.process_commands(message)
         return
 
-    # Temporary staff permission check
     is_staff = (
         message.author.guild_permissions.administrator
         or message.author.guild_permissions.manage_guild
@@ -52,12 +47,12 @@ async def on_message(message):
 
     if not is_staff:
         await message.reply(
-            "Sorry, this assistant is currently restricted to server administrators and managers.",
+            "Sorry, this assistant is currently restricted "
+            "to server administrators and managers.",
             mention_author=False
         )
         return
 
-    # Remove the bot mention from the message
     prompt = message.content.replace(
         f"<@{bot.user.id}>", ""
     ).replace(
@@ -71,7 +66,6 @@ async def on_message(message):
         )
         return
 
-    # Ask Gemini and send its response
     try:
         async with message.channel.typing():
             answer = await ask_gemini(prompt)
@@ -86,14 +80,14 @@ async def on_message(message):
         print(f"AI error: {error}")
 
         await message.reply(
-            "I ran into an issue while contacting my AI service. Please try again later.",
+            "I ran into an issue while contacting my AI service. "
+            "Please try again later.",
             mention_author=False
         )
 
     await bot.process_commands(message)
 
 
-# Start the bot
 if not DISCORD_TOKEN:
     raise RuntimeError("Missing DISCORD_TOKEN environment variable")
 
