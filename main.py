@@ -1,15 +1,18 @@
 
 import os
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+
+from ai_engine import ask_gemini
 
 # Load private environment variables
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# Discord bot configuration
+# Discord configuration
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -23,27 +26,65 @@ bot = commands.Bot(
 @bot.event
 async def on_ready():
     print(f"AI Assistant online: {bot.user}")
-    print("Waiting for instructions...")
+    print("Waiting for staff instructions...")
 
 
 @bot.event
 async def on_message(message):
 
-    # Ignore the bot's own messages
-    if message.author == bot.user:
+    # Ignore bots and direct messages
+    if message.author.bot or message.guild is None:
         return
 
-    # Ignore other bots
-    if message.author.bot:
+    # Only respond when directly mentioned
+    if bot.user not in message.mentions:
+        await bot.process_commands(message)
         return
 
-    # Only respond when mentioned
-    if bot.user.mentioned_in(message):
+    # Temporary staff permission check
+    is_staff = (
+        message.author.guild_permissions.administrator
+        or message.author.guild_permissions.manage_guild
+    )
 
-        await message.channel.send(
-            f"Hello {message.author.mention}! "
-            "I'm your AI server assistant. "
-            "My AI brain is being connected!"
+    if not is_staff:
+        await message.reply(
+            "Sorry, this assistant is currently restricted to server administrators and managers.",
+            mention_author=False
+        )
+        return
+
+    # Remove the bot mention from the message
+    prompt = message.content.replace(
+        f"<@{bot.user.id}>", ""
+    ).replace(
+        f"<@!{bot.user.id}>", ""
+    ).strip()
+
+    if not prompt:
+        await message.reply(
+            "What would you like help with?",
+            mention_author=False
+        )
+        return
+
+    # Ask Gemini and send its response
+    try:
+        async with message.channel.typing():
+            answer = await ask_gemini(prompt)
+
+        await message.reply(
+            answer[:1900],
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none()
+        )
+
+    except Exception as error:
+        print(f"AI error: {error}")
+
+        await message.reply(
+            "I ran into an issue while contacting my AI service. Please try again later.",
+            mention_author=False
         )
 
     await bot.process_commands(message)
