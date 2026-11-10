@@ -28,8 +28,7 @@ TOOLS = [
                 "Request a role assignment when a staff member "
                 "clearly asks to give an existing Discord member "
                 "an existing server role. This only prepares a "
-                "request for confirmation. It does not assign "
-                "the role."
+                "request for confirmation. It does not assign the role."
             ),
             "parameters": {
                 "type": "object",
@@ -54,10 +53,8 @@ TOOLS = [
             "name": "request_role_removal",
             "description": (
                 "Request removal of an existing server role "
-                "from an existing Discord member when a staff "
-                "member clearly asks for it. This only prepares "
-                "a request for confirmation. It does not remove "
-                "the role."
+                "from an existing Discord member. This only prepares "
+                "a request for confirmation."
             ),
             "parameters": {
                 "type": "object",
@@ -81,18 +78,26 @@ TOOLS = [
         "function": {
             "name": "request_channel_message",
             "description": (
-                "Prepare a request to send a message to an existing "
-                "Discord text channel. Use this when staff clearly "
-                "ask you to post, announce, or send a message in a "
-                "specific channel. This does not send the message. "
-                "The application must obtain staff confirmation first."
+                "Prepare a request to send a message to a Discord "
+                "text channel. The channel can be specified by its "
+                "name, a Discord channel mention such as <#123456789>, "
+                "or by referring to the current channel using phrases "
+                "such as 'here', 'this channel', or 'current channel'. "
+                "When the staff member refers to the current channel, "
+                "use the current channel information supplied in the "
+                "conversation context. Never guess a channel. "
+                "This only prepares a request for confirmation."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "channel_name": {
                         "type": "string",
-                        "description": "The name of the Discord text channel."
+                        "description": (
+                            "The exact channel name, Discord channel "
+                            "mention, or the exact current channel name "
+                            "provided in the conversation context."
+                        )
                     },
                     "message_content": {
                         "type": "string",
@@ -123,27 +128,32 @@ async def ask_groq(message: str) -> dict:
                         "Understand staff instructions carefully. "
                         "Be helpful, conversational, and concise. "
 
-                        "Use request_role_assignment only when staff clearly "
-                        "ask to give a member a role. "
+                        "Use request_role_assignment only when staff "
+                        "clearly ask to give a member a role. "
 
-                        "Use request_role_removal only when staff clearly "
-                        "ask to remove a role from a member. "
+                        "Use request_role_removal only when staff "
+                        "clearly ask to remove a role from a member. "
 
-                        "Use request_channel_message only when staff clearly "
-                        "ask you to send a message to a specific channel. "
-                        "Write the complete requested message in "
-                        "message_content. Do not invent announcements, "
-                        "events, dates, or information that staff did not "
-                        "provide. If the message content is unclear, ask "
-                        "a clarifying question. "
+                        "Use request_channel_message only when staff "
+                        "clearly ask you to send a message to a channel. "
 
-                        "Never invent member names, role names, or channel "
-                        "names. If information is missing or ambiguous, "
-                        "ask a clarifying question. "
+                        "For channel messages, understand Discord channel "
+                        "mentions such as <#123456789>. Preserve the "
+                        "channel mention exactly when using it. "
+
+                        "If staff say 'here', 'this channel', 'current "
+                        "channel', or similar, use the current channel "
+                        "name provided in the conversation context. "
+
+                        "If the channel is unclear and no current channel "
+                        "reference applies, ask a clarifying question. "
+
+                        "Do not invent channel names, member names, roles, "
+                        "announcements, dates, or information. "
 
                         "Never claim an action has been completed. "
-                        "The application must confirm and execute all "
-                        "Discord actions."
+                        "The application must confirm and execute "
+                        "all Discord actions."
                     )
                 },
                 {
