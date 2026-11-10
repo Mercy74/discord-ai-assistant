@@ -123,9 +123,139 @@ async def on_message(message):
         elapsed = time.perf_counter() - start_time
         print(f"Groq response time: {elapsed:.2f} seconds")
 
-        # Handle role assignment and removal.
         action_type = answer.get("type")
 
+        # Handle channel messages.
+        if action_type == "send_message":
+
+            channel_name = answer.get("channel_name", "").strip()
+            message_content = answer.get("message_content", "").strip()
+
+            channels = [
+                channel for channel in message.guild.text_channels
+                if channel.name.casefold() == channel_name.casefold()
+            ]
+
+            if not channels:
+                await message.reply(
+                    f"I couldn't find the text channel '{channel_name}'.",
+                    mention_author=False
+                )
+                return
+
+            if len(channels) > 1:
+                await message.reply(
+                    "I found multiple matching channels. "
+                    "Please clarify which one you mean.",
+                    mention_author=False
+                )
+                return
+
+            target_channel = channels[0]
+
+            if not message_content:
+                await message.reply(
+                    "I couldn't prepare a message to send.",
+                    mention_author=False
+                )
+                return
+
+            if len(message_content) > 1900:
+                await message.reply(
+                    "That message is too long to send safely. "
+                    "Please shorten it.",
+                    mention_author=False
+                )
+                return
+
+            bot_permissions = target_channel.permissions_for(
+                message.guild.me
+            )
+
+            if not bot_permissions.view_channel:
+                await message.reply(
+                    "I cannot access that channel.",
+                    mention_author=False
+                )
+                return
+
+            if not bot_permissions.send_messages:
+                await message.reply(
+                    "I don't have permission to send messages in that channel.",
+                    mention_author=False
+                )
+                return
+
+            await message.reply(
+                f"**Please confirm this message:**\n\n"
+                f"**Channel:** {target_channel.mention}\n"
+                f"**Message:**\n{message_content}\n\n"
+                "Reply **yes** to send it or **no** to cancel. "
+                "You have 30 seconds.",
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+
+            def confirmation_check(reply):
+                return (
+                    reply.author.id == message.author.id
+                    and reply.channel.id == message.channel.id
+                    and not reply.author.bot
+                )
+
+            try:
+                confirmation = await bot.wait_for(
+                    "message",
+                    timeout=30,
+                    check=confirmation_check
+                )
+            except asyncio.TimeoutError:
+                await message.channel.send(
+                    "Message sending cancelled because "
+                    "confirmation timed out."
+                )
+                return
+
+            if confirmation.content.strip().casefold() not in {
+                "yes", "y", "confirm"
+            }:
+                await message.channel.send(
+                    "Message sending cancelled."
+                )
+                return
+
+            bot_permissions = target_channel.permissions_for(
+                message.guild.me
+            )
+
+            if (
+                target_channel not in message.guild.text_channels
+                or not bot_permissions.view_channel
+                or not bot_permissions.send_messages
+            ):
+                await message.channel.send(
+                    "I can no longer access that channel or send messages there."
+                )
+                return
+
+            await target_channel.send(
+                message_content,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+
+            await message.channel.send(
+                f"Successfully sent your message to "
+                f"{target_channel.mention}."
+            )
+
+            print(
+                f"CHANNEL MESSAGE SENT: #{target_channel.name} "
+                f"by {message.author}"
+            )
+
+            return
+
+        # Handle role assignment and removal.
         if action_type in {"assign_role", "remove_role"}:
 
             member_name = answer.get("member_name", "")
