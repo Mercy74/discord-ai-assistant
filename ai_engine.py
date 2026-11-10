@@ -1,9 +1,7 @@
-
 import os
 
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 
 load_dotenv()
 
@@ -21,27 +19,24 @@ async def ask_gemini(message: str) -> str:
     """Send a message to Gemini and return its response."""
 
     try:
-        print("DEBUG: Sending request to Gemini...")
-        
-        response = await client.aio.models.generate_content(
+        print("DEBUG: Sending request to Gemini Interactions API...")
+
+        response = await client.aio.interactions.create(
             model=MODEL_NAME,
-            contents=message,
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    "You are an intelligent assistant for a Discord server. "
-                    "Understand the user's requests carefully. "
-                    "Be helpful, conversational, and concise. "
-                    "Never claim you have changed server settings, "
-                    "roles, channels, or members. You cannot perform "
-                    "Discord actions yet."
-                ),
-                temperature=0.3,
-                max_output_tokens=500
+            input=message,
+            system_instruction=(
+                "You are an intelligent assistant for a Discord server. "
+                "Understand the user's requests carefully. "
+                "Be helpful, conversational, and concise. "
+                "Never claim you have changed server settings, "
+                "roles, channels, or members. You cannot perform "
+                "Discord actions yet."
             )
         )
 
         print("DEBUG: Gemini returned a response.")
-        return response.text or "I couldn't generate a response."
+
+        return response.output_text or "I couldn't generate a response."
 
     except Exception as error:
         print(f"GEMINI ERROR TYPE: {type(error).__name__}")
