@@ -24,11 +24,31 @@ bot = commands.Bot(
 )
 
 
+startup_test_complete = False
+
+
 @bot.event
 async def on_ready():
+    global startup_test_complete
+
     print("DEBUG: Bot is ready!")
     print(f"AI Assistant online: {bot.user}")
     print("Waiting for staff instructions...")
+
+    if not startup_test_complete:
+        startup_test_complete = True
+
+        try:
+            print("DEBUG: Starting standalone Gemini test...")
+
+            result = await ask_gemini(
+                "Reply with exactly: RENDER GEMINI TEST SUCCESSFUL"
+            )
+
+            print("GEMINI STANDALONE TEST RESULT:", result)
+
+        except Exception as error:
+            print("STANDALONE TEST FAILED:", repr(error))
 
 
 @bot.event
