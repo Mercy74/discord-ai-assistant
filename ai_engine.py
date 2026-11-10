@@ -18,6 +18,7 @@ client = AsyncGroq(
     api_key=GROQ_API_KEY
 )
 
+
 TOOLS = [
     {
         "type": "function",
@@ -42,10 +43,35 @@ TOOLS = [
                         "description": "The exact requested server role."
                     }
                 },
-                "required": [
-                    "member_name",
-                    "role_name"
-                ],
+                "required": ["member_name", "role_name"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_role_removal",
+            "description": (
+                "Request removal of an existing server role "
+                "from an existing Discord member when a staff "
+                "member clearly asks for it. This only prepares "
+                "a request for confirmation. It does not remove "
+                "the role."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_name": {
+                        "type": "string",
+                        "description": "The member's name or Discord mention."
+                    },
+                    "role_name": {
+                        "type": "string",
+                        "description": "The exact server role to remove."
+                    }
+                },
+                "required": ["member_name", "role_name"],
                 "additionalProperties": False
             }
         }
