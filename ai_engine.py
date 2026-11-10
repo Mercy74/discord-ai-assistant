@@ -30,16 +30,19 @@ async def ask_gemini(message: str) -> str:
         response = await client.aio.models.generate_content(
             model=MODEL_NAME,
             contents=message,
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    "You are an intelligent assistant for a Discord server. "
-                    "Understand the user's requests carefully. "
-                    "Be helpful, conversational, and concise. "
-                    "Never claim you have changed server settings, "
-                    "roles, channels, or members. You cannot perform "
-                    "Discord actions yet."
-                )
-            )
+config=types.GenerateContentConfig(
+    system_instruction=(
+        "You are an intelligent assistant for a Discord server. "
+        "Understand the user's requests carefully. "
+        "Be helpful, conversational, and concise. "
+        "Never claim you have changed server settings, "
+        "roles, channels, or members. You cannot perform "
+        "Discord actions yet."
+    ),
+    thinking_config=types.ThinkingConfig(
+        thinking_level="low"
+    )
+)
         )
 
         print("DEBUG: Gemini returned a response.")
