@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from ai_engine import ask_gemini
+from ai_engine import ask_groq
 from keep_alive import keep_alive
 
 load_dotenv()
@@ -22,7 +22,6 @@ bot = commands.Bot(
     command_prefix="!",
     intents=intents
 )
-
 
 startup_test_complete = False
 
@@ -39,16 +38,16 @@ async def on_ready():
         startup_test_complete = True
 
         try:
-            print("DEBUG: Starting standalone Gemini test...")
+            print("DEBUG: Starting standalone Groq test...")
 
-            result = await ask_gemini(
-                "Reply with exactly: RENDER GEMINI TEST SUCCESSFUL"
+            result = await ask_groq(
+                "Reply with exactly: RENDER GROQ TEST SUCCESSFUL"
             )
 
-            print("GEMINI STANDALONE TEST RESULT:", result)
+            print("GROQ STANDALONE TEST RESULT:", result)
 
         except Exception as error:
-            print("STANDALONE TEST FAILED:", repr(error))
+            print("GROQ STANDALONE TEST FAILED:", repr(error))
 
 
 @bot.event
@@ -88,18 +87,17 @@ async def on_message(message):
         )
         return
 
-    
     try:
         start_time = time.perf_counter()
 
         async with message.channel.typing():
             answer = await asyncio.wait_for(
-                ask_gemini(prompt),
-                timeout=180
+                ask_groq(prompt),
+                timeout=90
             )
 
         elapsed = time.perf_counter() - start_time
-        print(f"Gemini response time: {elapsed:.2f} seconds")
+        print(f"Groq response time: {elapsed:.2f} seconds")
 
         await message.reply(
             answer[:1900],
@@ -108,7 +106,7 @@ async def on_message(message):
         )
 
     except asyncio.TimeoutError:
-        print("AI TIMEOUT: Gemini did not respond within 180 seconds.")
+        print("AI TIMEOUT: Groq did not respond within 90 seconds.")
 
         await message.reply(
             "My AI service is taking too long to respond. Please try again.",
@@ -120,11 +118,10 @@ async def on_message(message):
         print(f"AI ERROR DETAILS: {repr(error)}")
 
         await message.reply(
-    "I ran into an issue while contacting my AI service. "
-    "Please try again later.",
-    mention_author=False
-)
-
+            "I ran into an issue while contacting my AI service. "
+            "Please try again later.",
+            mention_author=False
+        )
 
 
 if not DISCORD_TOKEN:
