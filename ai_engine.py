@@ -79,6 +79,7 @@ TOOLS = [
 ]
 
 
+
 async def ask_groq(message: str) -> dict:
     """Ask Groq to respond or identify a requested Discord action."""
 
@@ -94,10 +95,10 @@ async def ask_groq(message: str) -> dict:
                         "You are an intelligent Discord server assistant. "
                         "Understand staff instructions carefully. "
                         "Be helpful, conversational, and concise. "
-                        "You may identify requests to assign roles using "
-                        "the provided function. Only request this function "
-                        "when the staff member clearly asks to assign a role "
-                        "to a member. Never invent member names or role names. "
+                        "Use request_role_assignment only when staff clearly "
+                        "ask to give a member a role. Use request_role_removal "
+                        "only when staff clearly ask to remove a role from "
+                        "a member. Never invent member names or role names. "
                         "If information is missing or ambiguous, ask a "
                         "clarifying question. Never claim an action has "
                         "been completed. The application must confirm and "
@@ -121,31 +122,20 @@ async def ask_groq(message: str) -> dict:
         if ai_message.tool_calls:
             tool_call = ai_message.tool_calls[0]
 
-
-if tool_call.function.name in {
-    "request_role_assignment",
-    "request_role_removal"
-}:
-    arguments = json.loads(
-        tool_call.function.arguments
-    )
-
-    return {
-        "type": (
-            "assign_role"
-            if tool_call.function.name == "request_role_assignment"
-            else "remove_role"
-        ),
-        "member_name": arguments["member_name"],
-        "role_name": arguments["role_name"]
-    }
-
+            if tool_call.function.name in {
+                "request_role_assignment",
+                "request_role_removal"
+            }:
                 arguments = json.loads(
                     tool_call.function.arguments
                 )
 
                 return {
-                    "type": "assign_role",
+                    "type": (
+                        "assign_role"
+                        if tool_call.function.name == "request_role_assignment"
+                        else "remove_role"
+                    ),
                     "member_name": arguments["member_name"],
                     "role_name": arguments["role_name"]
                 }
