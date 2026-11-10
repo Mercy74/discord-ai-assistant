@@ -74,6 +74,51 @@ def find_member(guild, member_name):
     ]
 
 
+def find_target_channel(guild, current_channel, prompt, channel_name):
+    """Resolve a Discord channel mention, current channel reference, or exact name."""
+
+    # First, look for an actual Discord channel mention in the instruction.
+    mention_match = re.search(
+        r"<#(\d+)>",
+        prompt
+    )
+
+    if mention_match:
+        channel = guild.get_channel(int(mention_match.group(1)))
+
+        if isinstance(channel, discord.TextChannel):
+            return channel
+
+        return None
+
+    # Recognize references to the channel where the instruction was sent.
+    current_channel_phrases = re.search(
+        r"\b(this channel|current channel|in here|to here|"
+        r"post here|send here|put it here|post it here|send it here)\b",
+        prompt,
+        re.IGNORECASE
+    )
+
+    if current_channel_phrases:
+        if isinstance(current_channel, discord.TextChannel):
+            return current_channel
+
+        return None
+
+    # Otherwise, match the channel name exactly.
+    search = channel_name.strip().lstrip("#").casefold()
+
+    matches = [
+        channel for channel in guild.text_channels
+        if channel.name.casefold() == search
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
+
+
 @bot.event
 async def on_message(message):
     print("DEBUG: Message event received!")
@@ -114,9 +159,18 @@ async def on_message(message):
     try:
         start_time = time.perf_counter()
 
+        # Give the AI the current channel context.
+        ai_prompt = (
+            f"Current Discord channel: #{message.channel.name} "
+            f"(ID: {message.channel.id}). "
+            "If staff say 'here', 'this channel', or 'current channel', "
+            "they mean this channel.\n\n"
+            f"Staff instruction: {prompt}"
+        )
+
         async with message.channel.typing():
             answer = await asyncio.wait_for(
-                ask_groq(prompt),
+                ask_groq(ai_prompt),
                 timeout=90
             )
 
@@ -131,27 +185,20 @@ async def on_message(message):
             channel_name = answer.get("channel_name", "").strip()
             message_content = answer.get("message_content", "").strip()
 
-            channels = [
-                channel for channel in message.guild.text_channels
-                if channel.name.casefold() == channel_name.casefold()
-            ]
+            target_channel = find_target_channel(
+                message.guild,
+                message.channel,
+                prompt,
+                channel_name
+            )
 
-            if not channels:
+            if target_channel is None:
                 await message.reply(
-                    f"I couldn't find the text channel '{channel_name}'.",
+                    "I couldn't identify the requested text channel. "
+                    "Please mention the channel or give me its exact name.",
                     mention_author=False
                 )
                 return
-
-            if len(channels) > 1:
-                await message.reply(
-                    "I found multiple matching channels. "
-                    "Please clarify which one you mean.",
-                    mention_author=False
-                )
-                return
-
-            target_channel = channels[0]
 
             if not message_content:
                 await message.reply(
@@ -168,9 +215,16 @@ async def on_message(message):
                 )
                 return
 
-            bot_permissions = target_channel.permissions_for(
-                message.guild.me
-            )
+            bot_member = message.guild.me
+
+            if bot_member is None:
+                await message.reply(
+                    "I couldn't verify my server permissions.",
+                    mention_author=False
+                )
+                return
+
+            bot_permissions = target_channel.permissions_for(bot_member)
 
             if not bot_permissions.view_channel:
                 await message.reply(
@@ -224,14 +278,14 @@ async def on_message(message):
                 )
                 return
 
-            bot_permissions = target_channel.permissions_for(
-                message.guild.me
-            )
+            # Verify channel access again before sending.
+            bot_member = message.guild.me
 
             if (
-                target_channel not in message.guild.text_channels
-                or not bot_permissions.view_channel
-                or not bot_permissions.send_messages
+                bot_member is None
+                or message.guild.get_channel(target_channel.id) is None
+                or not target_channel.permissions_for(bot_member).view_channel
+                or not target_channel.permissions_for(bot_member).send_messages
             ):
                 await message.channel.send(
                     "I can no longer access that channel or send messages there."
