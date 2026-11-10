@@ -100,10 +100,9 @@ async def on_message(message):
         print(f"AI ERROR DETAILS: {repr(error)}")
 
         await message.reply(
-            "I ran into an issue while contacting my AI service. "
-            "Please try again later.",
-            mention_author=False
-        )
+    "DIAGNOSTIC TEST: CURRENT MAIN.PY IS RUNNING.",
+    mention_author=False
+)
 
 
 
