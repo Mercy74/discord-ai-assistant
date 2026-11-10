@@ -123,11 +123,18 @@ async def on_message(message):
         elapsed = time.perf_counter() - start_time
         print(f"Groq response time: {elapsed:.2f} seconds")
 
-        # Handle a requested role assignment.
-        if answer.get("type") == "assign_role":
+        # Handle role assignment and removal.
+        action_type = answer.get("type")
+
+        if action_type in {"assign_role", "remove_role"}:
 
             member_name = answer.get("member_name", "")
             role_name = answer.get("role_name", "")
+
+            is_removal = action_type == "remove_role"
+
+            action_word = "remove" if is_removal else "give"
+            action_past = "removed" if is_removal else "assigned"
 
             members = find_member(message.guild, member_name)
 
@@ -169,12 +176,6 @@ async def on_message(message):
                 return
 
             role = roles[0]
-            if role.permissions.administrator:
-                await message.reply(
-                    "I cannot assign a role that grants Administrator access.",
-                    mention_author=False
-                )
-                return
             guild = message.guild
             bot_member = guild.me
 
@@ -194,7 +195,14 @@ async def on_message(message):
 
             if role.is_default() or role.managed:
                 await message.reply(
-                    "I cannot assign that role.",
+                    "I cannot modify that role.",
+                    mention_author=False
+                )
+                return
+
+            if not is_removal and role.permissions.administrator:
+                await message.reply(
+                    "I cannot assign a role that grants Administrator access.",
                     mention_author=False
                 )
                 return
@@ -209,13 +217,29 @@ async def on_message(message):
 
             if role >= message.author.top_role:
                 await message.reply(
-                    "You cannot authorize me to assign a role "
+                    "You cannot authorize me to modify a role "
                     "that is above or equal to your highest role.",
                     mention_author=False
                 )
                 return
 
-            if role in member.roles:
+            if member.top_role >= bot_member.top_role:
+                await message.reply(
+                    "I cannot manage this member because their highest "
+                    "role is above or equal to mine.",
+                    mention_author=False
+                )
+                return
+
+            if is_removal and role not in member.roles:
+                await message.reply(
+                    f"{member.display_name} does not have the "
+                    f"{role.name} role.",
+                    mention_author=False
+                )
+                return
+
+            if not is_removal and role in member.roles:
                 await message.reply(
                     f"{member.display_name} already has the "
                     f"{role.name} role.",
@@ -224,8 +248,9 @@ async def on_message(message):
                 return
 
             await message.reply(
-                f"Please confirm: should I give **{role.name}** "
-                f"to **{member.display_name}**?\n\n"
+                f"Please confirm: should I {action_word} **{role.name}** "
+                f"{'from' if is_removal else 'to'} "
+                f"**{member.display_name}**?\n\n"
                 "Reply **yes** to confirm or **no** to cancel. "
                 "You have 30 seconds.",
                 mention_author=False
@@ -246,7 +271,7 @@ async def on_message(message):
                 )
             except asyncio.TimeoutError:
                 await message.channel.send(
-                    "Role assignment cancelled because "
+                    "Role modification cancelled because "
                     "confirmation timed out."
                 )
                 return
@@ -255,11 +280,11 @@ async def on_message(message):
                 "yes", "y", "confirm"
             }:
                 await message.channel.send(
-                    "Role assignment cancelled."
+                    "Role modification cancelled."
                 )
                 return
 
-            # Recheck permissions immediately before execution.
+            # Recheck permissions and server information.
             bot_member = guild.me
 
             if (
@@ -269,31 +294,53 @@ async def on_message(message):
                 or role >= message.author.top_role
                 or role not in guild.roles
                 or guild.get_member(member.id) is None
+                or member.top_role >= bot_member.top_role
             ):
                 await message.channel.send(
-                    "The role assignment could not be completed "
+                    "The role modification could not be completed "
                     "because permissions or server information changed."
                 )
                 return
 
-            if role in member.roles:
-                await message.channel.send(
-                    "That member already has this role."
-                )
-                return
+            if is_removal:
+                if role not in member.roles:
+                    await message.channel.send(
+                        "That member no longer has this role."
+                    )
+                    return
 
-            await member.add_roles(
-                role,
-                reason=f"Confirmed by {message.author}"
-            )
+                await member.remove_roles(
+                    role,
+                    reason=f"Confirmed by {message.author}"
+                )
+
+            else:
+                if role.permissions.administrator:
+                    await message.channel.send(
+                        "I cannot assign a role that grants Administrator access."
+                    )
+                    return
+
+                if role in member.roles:
+                    await message.channel.send(
+                        "That member already has this role."
+                    )
+                    return
+
+                await member.add_roles(
+                    role,
+                    reason=f"Confirmed by {message.author}"
+                )
 
             await message.channel.send(
-                f"Successfully assigned **{role.name}** "
-                f"to **{member.display_name}**."
+                f"Successfully {action_past} **{role.name}** "
+                f"{'from' if is_removal else 'to'} "
+                f"**{member.display_name}**."
             )
 
             print(
-                f"ROLE ASSIGNED: {role.name} -> "
+                f"ROLE {action_past.upper()}: {role.name} "
+                f"{'from' if is_removal else '->'} "
                 f"{member.display_name} by {message.author}"
             )
 
