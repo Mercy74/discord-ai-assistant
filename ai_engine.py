@@ -75,9 +75,36 @@ TOOLS = [
                 "additionalProperties": False
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_channel_message",
+            "description": (
+                "Prepare a request to send a message to an existing "
+                "Discord text channel. Use this when staff clearly "
+                "ask you to post, announce, or send a message in a "
+                "specific channel. This does not send the message. "
+                "The application must obtain staff confirmation first."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_name": {
+                        "type": "string",
+                        "description": "The name of the Discord text channel."
+                    },
+                    "message_content": {
+                        "type": "string",
+                        "description": "The complete message to send."
+                    }
+                },
+                "required": ["channel_name", "message_content"],
+                "additionalProperties": False
+            }
+        }
     }
 ]
-
 
 
 async def ask_groq(message: str) -> dict:
@@ -95,14 +122,28 @@ async def ask_groq(message: str) -> dict:
                         "You are an intelligent Discord server assistant. "
                         "Understand staff instructions carefully. "
                         "Be helpful, conversational, and concise. "
+
                         "Use request_role_assignment only when staff clearly "
-                        "ask to give a member a role. Use request_role_removal "
-                        "only when staff clearly ask to remove a role from "
-                        "a member. Never invent member names or role names. "
-                        "If information is missing or ambiguous, ask a "
-                        "clarifying question. Never claim an action has "
-                        "been completed. The application must confirm and "
-                        "execute all Discord actions."
+                        "ask to give a member a role. "
+
+                        "Use request_role_removal only when staff clearly "
+                        "ask to remove a role from a member. "
+
+                        "Use request_channel_message only when staff clearly "
+                        "ask you to send a message to a specific channel. "
+                        "Write the complete requested message in "
+                        "message_content. Do not invent announcements, "
+                        "events, dates, or information that staff did not "
+                        "provide. If the message content is unclear, ask "
+                        "a clarifying question. "
+
+                        "Never invent member names, role names, or channel "
+                        "names. If information is missing or ambiguous, "
+                        "ask a clarifying question. "
+
+                        "Never claim an action has been completed. "
+                        "The application must confirm and execute all "
+                        "Discord actions."
                     )
                 },
                 {
@@ -121,23 +162,31 @@ async def ask_groq(message: str) -> dict:
 
         if ai_message.tool_calls:
             tool_call = ai_message.tool_calls[0]
+            function_name = tool_call.function.name
 
-            if tool_call.function.name in {
-                "request_role_assignment",
-                "request_role_removal"
-            }:
-                arguments = json.loads(
-                    tool_call.function.arguments
-                )
+            arguments = json.loads(
+                tool_call.function.arguments
+            )
 
+            if function_name == "request_role_assignment":
                 return {
-                    "type": (
-                        "assign_role"
-                        if tool_call.function.name == "request_role_assignment"
-                        else "remove_role"
-                    ),
+                    "type": "assign_role",
                     "member_name": arguments["member_name"],
                     "role_name": arguments["role_name"]
+                }
+
+            if function_name == "request_role_removal":
+                return {
+                    "type": "remove_role",
+                    "member_name": arguments["member_name"],
+                    "role_name": arguments["role_name"]
+                }
+
+            if function_name == "request_channel_message":
+                return {
+                    "type": "send_message",
+                    "channel_name": arguments["channel_name"],
+                    "message_content": arguments["message_content"]
                 }
 
         return {
