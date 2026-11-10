@@ -121,7 +121,25 @@ async def ask_groq(message: str) -> dict:
         if ai_message.tool_calls:
             tool_call = ai_message.tool_calls[0]
 
-            if tool_call.function.name == "request_role_assignment":
+
+if tool_call.function.name in {
+    "request_role_assignment",
+    "request_role_removal"
+}:
+    arguments = json.loads(
+        tool_call.function.arguments
+    )
+
+    return {
+        "type": (
+            "assign_role"
+            if tool_call.function.name == "request_role_assignment"
+            else "remove_role"
+        ),
+        "member_name": arguments["member_name"],
+        "role_name": arguments["role_name"]
+    }
+
                 arguments = json.loads(
                     tool_call.function.arguments
                 )
