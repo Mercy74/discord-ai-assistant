@@ -75,7 +75,7 @@ async def on_message(message):
         async with message.channel.typing():
             answer = await asyncio.wait_for(
                 ask_gemini(prompt),
-                timeout=30
+                timeout=60
             )
 
         elapsed = time.perf_counter() - start_time
