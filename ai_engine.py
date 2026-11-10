@@ -2,55 +2,58 @@
 import os
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from groq import AsyncGroq
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-MODEL_NAME = "gemini-3.8-flash"
+MODEL_NAME = "openai/gpt-oss-120b"
 
-if not GEMINI_API_KEY:
-    raise RuntimeError("Missing GEMINI_API_KEY environment variable")
+if not GROQ_API_KEY:
+    raise RuntimeError("Missing GROQ_API_KEY environment variable")
 
-client = genai.Client(
-    api_key=GEMINI_API_KEY,
-    http_options=types.HttpOptions(
-        timeout=120000
-    )
+client = AsyncGroq(
+    api_key=GROQ_API_KEY
 )
 
 
-async def ask_gemini(message: str) -> str:
-    """Send a message to Gemini and return its response."""
+async def ask_groq(message: str) -> str:
+    """Send a message to Groq and return its response."""
 
     try:
-        print("DEBUG: Sending request to Gemini Generate Content API...")
+        print("DEBUG: Sending request to Groq API...")
 
-        response = await client.aio.models.generate_content(
+        response = await client.chat.completions.create(
             model=MODEL_NAME,
-            contents=message,
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    "You are an intelligent assistant for a Discord server. "
-                    "Understand the user's requests carefully. "
-                    "Be helpful, conversational, and concise. "
-                    "Never claim you have changed server settings, "
-                    "roles, channels, or members. You cannot perform "
-                    "Discord actions yet."
-                ),
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="low"
-                )
-            )
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an intelligent assistant for a Discord server. "
+                        "Understand the user's requests carefully. "
+                        "Be helpful, conversational, and concise. "
+                        "Never claim you have changed server settings, roles, "
+                        "channels, or members. You cannot perform Discord "
+                        "actions yet."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": message
+                }
+            ],
+            max_completion_tokens=1000
         )
 
-        print("DEBUG: Gemini returned a response.")
+        print("DEBUG: Groq returned a response.")
 
-        return response.text or "I couldn't generate a response."
+        return (
+            response.choices[0].message.content
+            or "I couldn't generate a response."
+        )
 
     except Exception as error:
-        print(f"GEMINI ERROR TYPE: {type(error).__name__}")
-        print(f"GEMINI ERROR DETAILS: {repr(error)}")
+        print(f"GROQ ERROR TYPE: {type(error).__name__}")
+        print(f"GROQ ERROR DETAILS: {repr(error)}")
         raise
