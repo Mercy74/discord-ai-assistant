@@ -169,6 +169,12 @@ async def on_message(message):
                 return
 
             role = roles[0]
+            if role.permissions.administrator:
+                await message.reply(
+                    "I cannot assign a role that grants Administrator access.",
+                    mention_author=False
+                )
+                return
             guild = message.guild
             bot_member = guild.me
 
