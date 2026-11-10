@@ -75,7 +75,7 @@ async def on_message(message):
         async with message.channel.typing():
             answer = await asyncio.wait_for(
                 ask_gemini(prompt),
-                timeout=60
+                timeout=180
             )
 
         elapsed = time.perf_counter() - start_time
@@ -88,7 +88,7 @@ async def on_message(message):
         )
 
     except asyncio.TimeoutError:
-        print("AI TIMEOUT: Gemini did not respond within 30 seconds.")
+        print("AI TIMEOUT: Gemini did not respond within 180 seconds.")
 
         await message.reply(
             "My AI service is taking too long to respond. Please try again.",
