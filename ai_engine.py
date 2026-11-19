@@ -69,18 +69,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "request_member_ban",
-            "description": "Prepare a permanent ban request. The target can be an existing member identified by username or mention, or any Discord account identified by its numeric User ID, even if that account has left the server. Never guess an ID.",
+            "description": "Prepare a permanent ban request. Target can be an existing member or an account identified by numeric Discord User ID, even if outside the server.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "member_name": {
-                        "type": "string",
-                        "description": "The exact numeric Discord User ID, username, or Discord mention. Preserve numeric IDs exactly."
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Reason for the ban. Use 'No reason provided' if none was specified."
-                    }
+                    "member_name": {"type": "string"},
+                    "reason": {"type": "string"}
                 },
                 "required": ["member_name", "reason"],
                 "additionalProperties": False
@@ -91,18 +85,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "request_member_unban",
-            "description": "Prepare a request to lift a Discord server ban. Requires the target's numeric Discord User ID. Does not execute the unban.",
+            "description": "Prepare a request to lift a Discord server ban. Requires numeric Discord User ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "user_id": {
-                        "type": "string",
-                        "description": "The exact numeric Discord User ID of the banned account."
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Reason for removing the ban. Use 'No reason provided' if none was specified."
-                    }
+                    "user_id": {"type": "string"},
+                    "reason": {"type": "string"}
                 },
                 "required": ["user_id", "reason"],
                 "additionalProperties": False
@@ -113,7 +101,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "request_member_timeout",
-            "description": "Prepare a timeout request for an existing server member. Duration is required, from 1 to 40320 minutes. Does not execute the timeout.",
+            "description": "Prepare a timeout request for an existing server member. Duration is required, from 1 to 40320 minutes.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -134,7 +122,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "request_timeout_removal",
-            "description": "Prepare a request to remove an active timeout from an existing server member. Does not execute the change.",
+            "description": "Prepare a request to remove an active timeout from an existing server member.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -149,8 +137,19 @@ TOOLS = [
 ]
 
 
+ACTION_TOOLS = {
+    "request_role_assignment": "assign_role",
+    "request_role_removal": "remove_role",
+    "request_channel_message": "send_message",
+    "request_member_ban": "ban_member",
+    "request_member_unban": "unban_member",
+    "request_member_timeout": "timeout_member",
+    "request_timeout_removal": "remove_timeout"
+}
+
+
 async def ask_groq(message: str) -> dict:
-    """Ask Groq to respond or identify a requested Discord action."""
+    """Ask Groq to respond or prepare a Discord action."""
 
     try:
         print("DEBUG: Sending request to Groq API...")
@@ -165,62 +164,54 @@ async def ask_groq(message: str) -> dict:
                         "Understand staff instructions carefully. "
                         "Be helpful, conversational, and concise. "
 
-                        "Use request_role_assignment when staff clearly "
-                        "ask to give a member a role. "
+                        "CRITICAL TOOL RULES: "
+                        "When the staff clearly requests a Discord action, "
+                        "you MUST call the matching function tool. "
+                        "Never write a conversational confirmation instead "
+                        "of calling a tool. The application handles all "
+                        "confirmation prompts and execution. "
 
-                        "Use request_role_removal when staff clearly "
-                        "ask to remove a role from a member. "
+                        "Use request_role_assignment to give a member a role. "
+                        "Use request_role_removal to remove a member role. "
+                        "Use request_channel_message to send a channel message. "
 
-                        "Use request_channel_message when staff clearly "
-                        "ask to send a message to a channel. "
+                        "Use request_member_ban for permanent bans. "
+                        "The target can be an existing member or an account "
+                        "outside the server identified by numeric User ID. "
+                        "Preserve every digit of numeric IDs exactly. "
+                        "Never invent or modify IDs. "
 
-                        "Understand Discord channel mentions such as "
-                        "<#123456789>. Preserve the mention exactly. "
-                        "If staff say 'here', 'this channel', or "
-                        "'current channel', use the current channel "
-                        "information supplied in the context. "
-
-                        "Use request_member_ban when staff clearly ask "
-                        "to permanently ban an account. "
-                        "The target may be an existing member or someone "
-                        "who has left the server. "
-                        "For a numeric Discord User ID, preserve every "
-                        "digit exactly in member_name. "
-                        "Never invent or modify a User ID. "
-                        "A username alone cannot reliably identify "
-                        "someone who is outside the server. "
-
-                        "Use request_member_unban when staff clearly ask "
-                        "to lift or remove a server ban. "
+                        "Use request_member_unban to lift a server ban. "
                         "A numeric Discord User ID is required. "
-                        "Preserve the ID exactly. "
                         "Never confuse unbanning with timeout removal. "
 
-                        "Use request_member_timeout when staff clearly "
-                        "ask to timeout, mute, or temporarily restrict "
-                        "a member. A duration is mandatory. "
-
-                        "Convert timeout durations into minutes. "
-                        "Examples: 10 minutes = 10, 2 hours = 120, "
+                        "Use request_member_timeout for timeouts. "
+                        "A duration is mandatory. "
+                        "Convert durations into minutes: "
+                        "10 minutes = 10, 2 hours = 120, "
                         "1 day = 1440, 7 days = 10080. "
-                        "The maximum is 40320 minutes (28 days). "
+                        "Maximum duration is 40320 minutes (28 days). "
+                        "If duration is missing or unclear, ask a question "
+                        "instead of guessing. "
 
-                        "If a timeout duration is missing or unclear, "
-                        "ask the staff member instead of guessing. "
+                        "Use request_timeout_removal to remove an active timeout. "
 
-                        "Use request_timeout_removal when staff clearly "
-                        "ask to remove or lift an existing timeout. "
+                        "Understand channel mentions such as <#123456789>. "
+                        "Preserve channel IDs exactly. "
+                        "For 'here' or 'this channel', use the current "
+                        "channel information in the context. "
 
-                        "If the member or target is unclear, ask "
-                        "for clarification. Never invent member names, "
-                        "roles, channels, IDs, or durations. "
+                        "If a member, role, channel, ID, or other required "
+                        "detail is unclear, ask for clarification. "
+                        "Never invent missing information. "
 
-                        "If no moderation reason is provided, use "
+                        "If no moderation reason is given, use "
                         "'No reason provided'. "
 
                         "Never claim an action has been completed. "
-                        "The application must check permissions and "
-                        "request confirmation before executing actions."
+                        "You only prepare the action. "
+                        "The application checks permissions, asks for "
+                        "confirmation, and executes the action."
                     )
                 },
                 {
@@ -230,6 +221,7 @@ async def ask_groq(message: str) -> dict:
             ],
             tools=TOOLS,
             tool_choice="auto",
+            parallel_tool_calls=False,
             max_completion_tokens=1000
         )
 
@@ -238,59 +230,74 @@ async def ask_groq(message: str) -> dict:
         ai_message = response.choices[0].message
 
         if ai_message.tool_calls:
+            if len(ai_message.tool_calls) != 1:
+                return {
+                    "type": "message",
+                    "content": "Please request one server action at a time."
+                }
+
             tool_call = ai_message.tool_calls[0]
             function_name = tool_call.function.name
 
-            arguments = json.loads(
-                tool_call.function.arguments
-            )
-
-            if function_name == "request_role_assignment":
+            if function_name not in ACTION_TOOLS:
                 return {
-                    "type": "assign_role",
+                    "type": "message",
+                    "content": "I couldn't identify that server action."
+                }
+
+            arguments = json.loads(tool_call.function.arguments)
+
+            action_type = ACTION_TOOLS[function_name]
+
+            print(f"DEBUG: AI prepared action: {action_type}")
+            print(f"DEBUG: Action arguments: {arguments}")
+
+            if action_type == "assign_role":
+                return {
+                    "type": action_type,
                     "member_name": arguments["member_name"],
                     "role_name": arguments["role_name"]
                 }
 
-            if function_name == "request_role_removal":
+            if action_type == "remove_role":
                 return {
-                    "type": "remove_role",
+                    "type": action_type,
                     "member_name": arguments["member_name"],
                     "role_name": arguments["role_name"]
                 }
 
-            if function_name == "request_channel_message":
+            if action_type == "send_message":
                 return {
-                    "type": "send_message",
+                    "type": action_type,
                     "channel_name": arguments["channel_name"],
                     "message_content": arguments["message_content"]
                 }
 
-            if function_name == "request_member_ban":
+            if action_type == "ban_member":
                 return {
-                    "type": "ban_member",
+                    "type": action_type,
                     "member_name": arguments["member_name"],
                     "reason": arguments["reason"]
                 }
 
-            if function_name == "request_member_unban":
+            if action_type == "unban_member":
                 return {
-                    "type": "unban_member",
+                    "type": action_type,
                     "user_id": arguments["user_id"],
                     "reason": arguments["reason"]
                 }
 
-            if function_name == "request_member_timeout":
+            if action_type == "timeout_member":
                 return {
-                    "type": "timeout_member",
+                    "type": action_type,
                     "member_name": arguments["member_name"],
                     "duration_minutes": arguments["duration_minutes"],
                     "reason": arguments["reason"]
                 }
 
-            if function_name == "request_timeout_removal":
+            if action_type == "remove_timeout":
                 return {
-                    "type": "remove_timeout",
+                    "type": action_type,
                     "member_name": arguments["member_name"],
                     "reason": arguments["reason"]
                 }
