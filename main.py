@@ -3,8 +3,8 @@ import os
 import re
 import asyncio
 import threading
-
 from datetime import timedelta
+
 from flask import Flask
 import discord
 from discord.ext import commands
@@ -12,9 +12,9 @@ from discord.ext import commands
 from ai_engine import ask_groq
 
 
-# ============================================================
-# ENVIRONMENT VARIABLES
-# ============================================================
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -22,9 +22,9 @@ if not DISCORD_TOKEN:
     raise RuntimeError("Missing DISCORD_TOKEN environment variable")
 
 
-# ============================================================
-# RENDER KEEP-ALIVE SERVER
-# ============================================================
+# =========================================================
+# FLASK KEEP-ALIVE SERVER
+# =========================================================
 
 app = Flask(__name__)
 
@@ -34,309 +34,279 @@ def home():
     return "Discord AI Assistant is running!"
 
 
-def run_web_server():
-    port = int(os.getenv("PORT", 10000))
+def keep_alive():
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
 
-def keep_alive():
-    server_thread = threading.Thread(
-        target=run_web_server,
-        daemon=True
-    )
-    server_thread.start()
-
-
-# ============================================================
+# =========================================================
 # DISCORD BOT SETUP
-# ============================================================
+# =========================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-# ============================================================
-# MEMBER SEARCH
-# ============================================================
+# Pending confirmations are stored in memory while the bot runs.
+# Each confirmation is tied to one staff member, one channel,
+# and one server.
+pending_confirmations = {}
 
-async def find_member(guild, member_name):
-    """
-    Find a member by Discord mention, ID, username,
-    display name, or partial name.
-    """
 
-    member_name = member_name.strip()
+# =========================================================
+# GENERAL HELPERS
+# =========================================================
 
-    mention_match = re.fullmatch(
-        r"<@!?(\d+)>",
-        member_name
+def confirmation_key(message):
+    return (
+        message.guild.id,
+        message.channel.id,
+        message.author.id
     )
 
-    if mention_match:
-        member_id = int(mention_match.group(1))
 
-        member = guild.get_member(member_id)
-
-        if member is None:
-            try:
-                member = await guild.fetch_member(member_id)
-            except discord.NotFound:
-                return None, "I couldn't find that member."
-            except discord.HTTPException:
-                return None, "I couldn't retrieve that member."
-
-        return member, None
-
-    if member_name.isdigit():
-        member_id = int(member_name)
-
-        member = guild.get_member(member_id)
-
-        if member is None:
-            try:
-                member = await guild.fetch_member(member_id)
-            except discord.NotFound:
-                return None, "I couldn't find that member."
-            except discord.HTTPException:
-                return None, "I couldn't retrieve that member."
-
-        return member, None
-
-    members = guild.members
-
-    search_name = member_name.lower()
-
-    exact_matches = [
-        member for member in members
-        if search_name in (
-            member.name.lower(),
-            member.display_name.lower(),
-            str(member).lower()
-        )
-    ]
-
-    if len(exact_matches) == 1:
-        return exact_matches[0], None
-
-    if len(exact_matches) > 1:
-        return None, (
-            "I found multiple members with that name. "
-            "Please use their Discord mention."
-        )
-
-    partial_matches = [
-        member for member in members
-        if (
-            search_name in member.name.lower()
-            or search_name in member.display_name.lower()
-        )
-    ]
-
-    if len(partial_matches) == 1:
-        return partial_matches[0], None
-
-    if len(partial_matches) > 1:
-        return None, (
-            "I found multiple possible members. "
-            "Please use their Discord mention."
-        )
-
-    return None, "I couldn't find that member."
+def is_staff(member):
+    permissions = member.guild_permissions
+    return permissions.administrator or permissions.manage_guild
 
 
-# ============================================================
-# CHANNEL SEARCH
-# ============================================================
-
-def find_target_channel(guild, channel_name, current_channel):
-    """
-    Find a channel by mention, name, or current-channel reference.
-    """
-
-    channel_name = channel_name.strip()
-
-    current_references = [
-        "here",
-        "this channel",
-        "current channel",
-        "this chat"
-    ]
-
-    if channel_name.lower() in current_references:
-        return current_channel
-
-    mention_match = re.fullmatch(
-        r"<#(\d+)>",
-        channel_name
-    )
-
-    if mention_match:
-        channel_id = int(mention_match.group(1))
-        return guild.get_channel(channel_id)
-
-    cleaned_name = channel_name.lstrip("#").lower()
-
-    exact_matches = [
-        channel for channel in guild.text_channels
-        if channel.name.lower() == cleaned_name
-    ]
-
-    if len(exact_matches) == 1:
-        return exact_matches[0]
-
-    partial_matches = [
-        channel for channel in guild.text_channels
-        if cleaned_name in channel.name.lower()
-    ]
-
-    if len(partial_matches) == 1:
-        return partial_matches[0]
-
-    return None
-
-
-# ============================================================
-# CONFIRMATION SYSTEM
-# ============================================================
-
-async def get_confirmation(message, description):
-    """
-    Ask the staff member to confirm an action.
-    """
-
-    await message.reply(
-        f"**Please confirm this action:**\n"
-        f"{description}\n\n"
-        f"Reply with **yes** to proceed or **no** to cancel.\n"
-        f"You have 30 seconds.",
-        mention_author=False
-    )
-
-    def check(response):
-        return (
-            response.author.id == message.author.id
-            and response.channel.id == message.channel.id
-            and not response.author.bot
-        )
-
-    try:
-        response = await bot.wait_for(
-            "message",
-            timeout=30,
-            check=check
-        )
-
-        answer = response.content.strip().lower()
-
-        if answer in ["yes", "y", "confirm"]:
-            return True
-
-        if answer in ["no", "n", "cancel"]:
-            await message.reply(
-                "Action cancelled.",
-                mention_author=False
-            )
-            return False
-
-        await message.reply(
-            "I didn't receive a valid confirmation. "
-            "The action has been cancelled.",
-            mention_author=False
-        )
-        return False
-
-    except asyncio.TimeoutError:
-        await message.reply(
-            "Confirmation timed out. The action was cancelled.",
-            mention_author=False
-        )
-        return False
-
-
-# ============================================================
-# MEMBER HIERARCHY CHECK
-# ============================================================
-
-def check_member_hierarchy(
-    guild,
-    member,
-    staff_member,
-    bot_member
-):
-    """
-    Prevent actions against protected or higher-ranking members.
-    """
-
-    if member.id == guild.owner_id:
-        return "The server owner cannot be targeted by this action."
-
-    if member.id == bot_member.id:
-        return "I cannot perform this action on myself."
-
-    if member.id == staff_member.id:
-        return (
-            "You cannot use this assistant to perform "
-            "this action on yourself."
-        )
-
-    if member.top_role >= bot_member.top_role:
-        return (
-            "I cannot manage this member because their highest "
-            "role is above or equal to mine."
-        )
-
-    if staff_member.id == guild.owner_id:
+def get_bot_member(guild):
+    if bot.user is None:
         return None
 
-    if member.top_role >= staff_member.top_role:
-        return (
-            "You cannot authorize an action against a member "
-            "whose highest role is above or equal to yours."
-        )
+    return guild.get_member(bot.user.id)
+
+
+def get_user_id(value):
+    """Extract a numeric Discord ID from an ID or user mention."""
+
+    if value is None:
+        return None
+
+    value = str(value).strip()
+
+    mention_match = re.fullmatch(r"<@!?(\d+)>", value)
+
+    if mention_match:
+        return int(mention_match.group(1))
+
+    if value.isdigit():
+        return int(value)
 
     return None
 
 
-# ============================================================
-# ROLE PERMISSION CHECK
-# ============================================================
+async def find_member(guild, member_name):
+    """Find a current server member by mention, ID, username, or display name."""
 
-def check_role_hierarchy(
-    role,
-    staff_member,
-    bot_member
-):
+    user_id = get_user_id(member_name)
+
+    if user_id:
+        member = guild.get_member(user_id)
+
+        if member:
+            return member
+
+        try:
+            return await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return None
+        except discord.HTTPException:
+            return None
+
+    search = str(member_name).strip().lower()
+
+    if not search:
+        return None
+
+    for member in guild.members:
+        if (
+            member.name.lower() == search
+            or member.display_name.lower() == search
+            or str(member) .lower() == search
+        ):
+            return member
+
+    matches = [
+        member for member in guild.members
+        if search in member.name.lower()
+        or search in member.display_name.lower()
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
+
+
+def find_role(guild, role_name):
+    search = str(role_name).strip().lower()
+
+    for role in guild.roles:
+        if role.name.lower() == search:
+            return role
+
+    return None
+
+
+async def find_target_channel(guild, channel_name, current_channel):
+    search = str(channel_name).strip().lower()
+
+    if not search or search in ("here", "this channel", "current channel"):
+        return current_channel
+
+    channel_match = re.fullmatch(r"<#(\d+)>", search)
+
+    if channel_match:
+        channel_id = int(channel_match.group(1))
+        channel = guild.get_channel(channel_id)
+
+        if channel:
+            return channel
+
+        try:
+            return await guild.fetch_channel(channel_id)
+        except discord.HTTPException:
+            return None
+
+    for channel in guild.text_channels:
+        if channel.name.lower() == search:
+            return channel
+
+    matches = [
+        channel for channel in guild.text_channels
+        if search in channel.name.lower()
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
+
+
+# =========================================================
+# PERMISSION AND HIERARCHY CHECKS
+# =========================================================
+
+def check_member_hierarchy(guild, target, staff_member, bot_member):
+    """Return an error message if a member cannot be moderated."""
+
+    if target.id == guild.owner_id:
+        return "I cannot moderate the server owner."
+
+    if bot_member and target.id == bot_member.id:
+        return "I cannot moderate myself."
+
+    if target.id == staff_member.id:
+        return "You cannot use this action on yourself."
+
+    if bot_member and target.top_role >= bot_member.top_role:
+        return "That member has a role equal to or higher than my highest role."
+
+    if staff_member.id != guild.owner_id:
+        if target.top_role >= staff_member.top_role:
+            return "You cannot moderate a member with a role equal to or higher than your highest role."
+
+    return None
+
+
+def check_role_hierarchy(role, staff_member, bot_member):
     if role.is_default():
         return "I cannot assign or remove the @everyone role."
 
     if role.managed:
-        return "I cannot manage an integration-managed role."
+        return "That role is managed by an integration and cannot be changed."
 
-    if role >= bot_member.top_role:
-        return (
-            "I cannot manage that role because it is above "
-            "or equal to my highest role."
-        )
+    if bot_member and role >= bot_member.top_role:
+        return "That role is equal to or higher than my highest role."
 
     if staff_member.id != staff_member.guild.owner_id:
         if role >= staff_member.top_role:
-            return (
-                "You cannot authorize changes to a role "
-                "above or equal to your highest role."
-            )
+            return "You cannot manage a role equal to or higher than your highest role."
 
     return None
 
 
-# ============================================================
+# =========================================================
+# CONFIRMATION SYSTEM
+# =========================================================
+
+async def get_confirmation(message, description):
+    """
+    Ask for confirmation and wait for a reply from the
+    original staff member in the original channel.
+    """
+
+    key = confirmation_key(message)
+
+    if key in pending_confirmations:
+        await message.reply(
+            "You already have an action awaiting confirmation in this channel."
+        )
+        return False
+
+    future = asyncio.get_running_loop().create_future()
+    pending_confirmations[key] = future
+
+    try:
+        await message.reply(
+            f"**Please confirm this action:**\n"
+            f"{description}\n\n"
+            "Reply **yes** to proceed or **no** to cancel. "
+            "You have 60 seconds."
+        )
+
+        try:
+            return await asyncio.wait_for(future, timeout=60)
+        except asyncio.TimeoutError:
+            await message.channel.send(
+                "Confirmation expired. The action was cancelled."
+            )
+            return False
+
+    finally:
+        if pending_confirmations.get(key) is future:
+            pending_confirmations.pop(key, None)
+
+
+async def handle_pending_confirmation(message):
+    """Intercept confirmation replies before sending messages to the AI."""
+
+    key = confirmation_key(message)
+    future = pending_confirmations.get(key)
+
+    if future is None:
+        return False
+
+    if future.done():
+        return True
+
+    content = re.sub(r"<@!?\d+>", "", message.content).strip().lower()
+
+    if content in ("yes", "y", "confirm"):
+        future.set_result(True)
+        await message.reply("Confirmation received. Processing the action.")
+        return True
+
+    if content in ("no", "n", "cancel"):
+        future.set_result(False)
+        await message.reply("Action cancelled.")
+        return True
+
+    await message.reply(
+        "You have an action awaiting confirmation. "
+        "Reply **yes** to proceed or **no** to cancel."
+    )
+
+    return True
+
+
+# =========================================================
 # BOT READY EVENT
-# ============================================================
+# =========================================================
 
 @bot.event
 async def on_ready():
@@ -345,812 +315,741 @@ async def on_ready():
     print("Waiting for staff instructions...")
 
 
-# ============================================================
-# MESSAGE EVENT
-# ============================================================
+# =========================================================
+# MESSAGE HANDLER
+# =========================================================
 
 @bot.event
 async def on_message(message):
 
-    if message.author.bot:
+    # Ignore bots and direct messages.
+    if message.author.bot or message.guild is None:
         return
 
-    if message.guild is None:
+    if not bot.is_ready():
         return
 
-    if bot.user is None:
+    # IMPORTANT:
+    # Handle pending confirmations BEFORE requiring a bot mention.
+    if await handle_pending_confirmation(message):
         return
 
-    # Only respond when directly mentioned.
+    # Only respond to staff.
+    if not is_staff(message.author):
+        return
+
+    # Normal instructions must mention the bot.
     if bot.user not in message.mentions:
-        return
-
-    # --------------------------------------------------------
-    # STAFF ACCESS CHECK
-    # --------------------------------------------------------
-
-    staff_permissions = message.author.guild_permissions
-
-    if not (
-        staff_permissions.administrator
-        or staff_permissions.manage_guild
-    ):
-        await message.reply(
-            "You don't have permission to use my staff commands.",
-            mention_author=False
-        )
         return
 
     print("DEBUG: Staff instruction received.")
 
-    # --------------------------------------------------------
-    # BUILD AI CONTEXT
-    # --------------------------------------------------------
-
-    clean_message = re.sub(
+    # Remove the bot mention from the instruction.
+    instruction = re.sub(
         rf"<@!?{bot.user.id}>",
         "",
         message.content
     ).strip()
 
-    context = (
-        f"SERVER: {message.guild.name}\n"
-        f"CURRENT CHANNEL: #{message.channel.name}\n"
-        f"CURRENT CHANNEL ID: {message.channel.id}\n"
-        f"STAFF MEMBER: {message.author.display_name}\n"
-        f"STAFF MEMBER ID: {message.author.id}\n\n"
-        f"STAFF INSTRUCTION: {clean_message}"
+    if not instruction:
+        await message.reply("What would you like me to do?")
+        return
+
+    prompt = (
+        f"Server: {message.guild.name}\n"
+        f"Server ID: {message.guild.id}\n"
+        f"Current channel: #{message.channel.name}\n"
+        f"Current channel ID: {message.channel.id}\n"
+        f"Staff member: {message.author.display_name}\n"
+        f"Staff user ID: {message.author.id}\n\n"
+        f"Staff instruction: {instruction}"
     )
 
-    # --------------------------------------------------------
-    # ASK GROQ
-    # --------------------------------------------------------
-
-    async with message.channel.typing():
-
-        try:
+    try:
+        async with message.channel.typing():
             result = await asyncio.wait_for(
-                ask_groq(context),
+                ask_groq(prompt),
                 timeout=90
             )
 
-        except asyncio.TimeoutError:
-            await message.reply(
-                "The AI request took too long. Please try again.",
-                mention_author=False
-            )
-            return
+    except asyncio.TimeoutError:
+        await message.reply(
+            "The AI request took too long. Please try again."
+        )
+        return
 
-        except Exception as error:
-            print(f"AI ERROR: {repr(error)}")
-
-            await message.reply(
-                "I encountered an error while processing that request.",
-                mention_author=False
-            )
-            return
+    except Exception as error:
+        print(f"AI ERROR: {type(error).__name__}: {error}")
+        await message.reply(
+            "I encountered an error while processing that request."
+        )
+        return
 
     if not isinstance(result, dict):
-        await message.reply(
-            "I received an invalid response from the AI.",
-            mention_author=False
-        )
+        await message.reply(str(result))
         return
 
     action_type = result.get("type")
 
-    # --------------------------------------------------------
-    # NORMAL AI RESPONSE
-    # --------------------------------------------------------
-
     if action_type == "message":
         await message.reply(
-            result.get("content", "I couldn't generate a response."),
-            mention_author=False
+            result.get("content", "I couldn't generate a response.")
         )
         return
 
     guild = message.guild
     staff_member = message.author
-    bot_member = guild.me
+    bot_member = get_bot_member(guild)
 
     if bot_member is None:
         await message.reply(
-            "I couldn't verify my server permissions.",
-            mention_author=False
+            "I couldn't verify my server membership. Please try again."
         )
         return
 
-    # ========================================================
-    # ROLE ASSIGNMENT
-    # ========================================================
+    # =====================================================
+    # ASSIGN ROLE
+    # =====================================================
 
     if action_type == "assign_role":
 
-        if not staff_permissions.manage_roles:
+        if not staff_member.guild_permissions.manage_roles:
             await message.reply(
-                "You don't have permission to authorize role changes.",
-                mention_author=False
+                "You need the Manage Roles permission to do that."
             )
             return
 
         if not bot_member.guild_permissions.manage_roles:
             await message.reply(
-                "I need the Manage Roles permission to do that.",
-                mention_author=False
+                "I need the Manage Roles permission to do that."
             )
             return
 
-        member, error = await find_member(
-            guild,
-            result.get("member_name", "")
-        )
+        member = await find_member(guild, result.get("member_name"))
+        role = find_role(guild, result.get("role_name"))
+
+        if not member:
+            await message.reply("I couldn't find that server member.")
+            return
+
+        if not role:
+            await message.reply("I couldn't find that role.")
+            return
+
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
+        ) or check_role_hierarchy(role, staff_member, bot_member)
 
         if error:
-            await message.reply(error, mention_author=False)
-            return
-
-        role_name = result.get("role_name", "").strip()
-
-        role = discord.utils.find(
-            lambda item: item.name.lower() == role_name.lower(),
-            guild.roles
-        )
-
-        if role is None:
-            await message.reply(
-                f"I couldn't find the role **{role_name}**.",
-                mention_author=False
-            )
-            return
-
-        hierarchy_error = check_role_hierarchy(
-            role,
-            staff_member,
-            bot_member
-        )
-
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
+            await message.reply(error)
             return
 
         if role in member.roles:
-            await message.reply(
-                f"{member.mention} already has the **{role.name}** role.",
-                mention_author=False
-            )
+            await message.reply("That member already has that role.")
             return
 
         confirmed = await get_confirmation(
             message,
-            f"Give the **{role.name}** role to {member.mention}?"
+            f"Give **{role.name}** to **{member.display_name}**?"
         )
 
         if not confirmed:
             return
 
+        if not staff_member.guild_permissions.manage_roles:
+            await message.reply("Your Manage Roles permission is no longer available.")
+            return
+
+        if not bot_member.guild_permissions.manage_roles:
+            await message.reply("I no longer have Manage Roles permission.")
+            return
+
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
+        ) or check_role_hierarchy(role, staff_member, bot_member)
+
+        if error:
+            await message.reply(error)
+            return
+
         try:
-            await member.add_roles(
-                role,
-                reason=f"Authorized by {staff_member}"
+            await member.add_roles(role, reason="AI Assistant staff request")
+            await message.channel.send(
+                f"Successfully gave **{role.name}** to **{member.display_name}**."
             )
-
-            await message.reply(
-                f"Successfully gave **{role.name}** to {member.mention}.",
-                mention_author=False
-            )
-
         except discord.Forbidden:
-            await message.reply(
-                "Discord denied that action. Check my role hierarchy "
-                "and Manage Roles permission.",
-                mention_author=False
-            )
-
+            await message.reply("Discord denied the role assignment.")
         except discord.HTTPException as error:
-            print(f"ROLE ASSIGNMENT ERROR: {repr(error)}")
-
-            await message.reply(
-                "I couldn't assign that role because Discord returned an error.",
-                mention_author=False
-            )
+            await message.reply(f"Discord returned an error: {error}")
 
         return
 
-    # ========================================================
-    # ROLE REMOVAL
-    # ========================================================
+    # =====================================================
+    # REMOVE ROLE
+    # =====================================================
 
     if action_type == "remove_role":
 
-        if not staff_permissions.manage_roles:
+        if not staff_member.guild_permissions.manage_roles:
             await message.reply(
-                "You don't have permission to authorize role changes.",
-                mention_author=False
+                "You need the Manage Roles permission to do that."
             )
             return
 
         if not bot_member.guild_permissions.manage_roles:
             await message.reply(
-                "I need the Manage Roles permission to do that.",
-                mention_author=False
+                "I need the Manage Roles permission to do that."
             )
             return
 
-        member, error = await find_member(
-            guild,
-            result.get("member_name", "")
-        )
+        member = await find_member(guild, result.get("member_name"))
+        role = find_role(guild, result.get("role_name"))
+
+        if not member:
+            await message.reply("I couldn't find that server member.")
+            return
+
+        if not role:
+            await message.reply("I couldn't find that role.")
+            return
+
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
+        ) or check_role_hierarchy(role, staff_member, bot_member)
 
         if error:
-            await message.reply(error, mention_author=False)
-            return
-
-        role_name = result.get("role_name", "").strip()
-
-        role = discord.utils.find(
-            lambda item: item.name.lower() == role_name.lower(),
-            guild.roles
-        )
-
-        if role is None:
-            await message.reply(
-                f"I couldn't find the role **{role_name}**.",
-                mention_author=False
-            )
-            return
-
-        hierarchy_error = check_role_hierarchy(
-            role,
-            staff_member,
-            bot_member
-        )
-
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
+            await message.reply(error)
             return
 
         if role not in member.roles:
-            await message.reply(
-                f"{member.mention} doesn't have the **{role.name}** role.",
-                mention_author=False
-            )
+            await message.reply("That member doesn't have that role.")
             return
 
         confirmed = await get_confirmation(
             message,
-            f"Remove the **{role.name}** role from {member.mention}?"
+            f"Remove **{role.name}** from **{member.display_name}**?"
         )
 
         if not confirmed:
             return
 
+        if not staff_member.guild_permissions.manage_roles:
+            await message.reply("Your Manage Roles permission is no longer available.")
+            return
+
+        if not bot_member.guild_permissions.manage_roles:
+            await message.reply("I no longer have Manage Roles permission.")
+            return
+
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
+        ) or check_role_hierarchy(role, staff_member, bot_member)
+
+        if error:
+            await message.reply(error)
+            return
+
         try:
-            await member.remove_roles(
-                role,
-                reason=f"Authorized by {staff_member}"
+            await member.remove_roles(role, reason="AI Assistant staff request")
+            await message.channel.send(
+                f"Successfully removed **{role.name}** from **{member.display_name}**."
             )
-
-            await message.reply(
-                f"Successfully removed **{role.name}** from {member.mention}.",
-                mention_author=False
-            )
-
         except discord.Forbidden:
-            await message.reply(
-                "Discord denied that action. Check my role hierarchy "
-                "and Manage Roles permission.",
-                mention_author=False
-            )
-
+            await message.reply("Discord denied the role removal.")
         except discord.HTTPException as error:
-            print(f"ROLE REMOVAL ERROR: {repr(error)}")
-
-            await message.reply(
-                "I couldn't remove that role because Discord returned an error.",
-                mention_author=False
-            )
+            await message.reply(f"Discord returned an error: {error}")
 
         return
 
-    # ========================================================
-    # CHANNEL MESSAGES
-    # ========================================================
+    # =====================================================
+    # SEND CHANNEL MESSAGE
+    # =====================================================
 
     if action_type == "send_message":
 
         if not bot_member.guild_permissions.send_messages:
             await message.reply(
-                "I don't have permission to send messages.",
-                mention_author=False
+                "I don't have permission to send messages."
             )
             return
 
-        channel_name = result.get("channel_name", "")
-        content = result.get("message_content", "")
-
-        target_channel = find_target_channel(
+        channel = await find_target_channel(
             guild,
-            channel_name,
+            result.get("channel_name"),
             message.channel
         )
 
-        if target_channel is None:
-            await message.reply(
-                "I couldn't find that channel. Please specify "
-                "the channel name or mention it.",
-                mention_author=False
-            )
+        content = result.get("message_content", "").strip()
+
+        if not channel:
+            await message.reply("I couldn't find that text channel.")
             return
 
-        if not isinstance(
-            target_channel,
-            (discord.TextChannel, discord.Thread)
-        ):
-            await message.reply(
-                "That isn't a supported text channel.",
-                mention_author=False
-            )
+        if not content:
+            await message.reply("The message content cannot be empty.")
             return
 
-        if not content.strip():
+        permissions = channel.permissions_for(bot_member)
+
+        if not permissions.send_messages:
             await message.reply(
-                "I need the message content before I can send it.",
-                mention_author=False
+                "I don't have permission to send messages in that channel."
             )
             return
-
-        channel_permissions = target_channel.permissions_for(bot_member)
-
-        if not channel_permissions.send_messages:
-            await message.reply(
-                "I don't have permission to send messages in "
-                f"{target_channel.mention}.",
-                mention_author=False
-            )
-            return
-
-        if isinstance(target_channel, discord.Thread):
-            if not channel_permissions.send_messages_in_threads:
-                await message.reply(
-                    "I don't have permission to send messages in that thread.",
-                    mention_author=False
-                )
-                return
 
         confirmed = await get_confirmation(
             message,
-            f"Send this message to {target_channel.mention}?\n\n"
+            f"Send this message in **#{channel.name}**?\n\n"
             f"> {content}"
         )
 
         if not confirmed:
             return
 
+        if not bot_member.guild_permissions.send_messages:
+            await message.reply("I no longer have permission to send messages.")
+            return
+
+        permissions = channel.permissions_for(bot_member)
+
+        if not permissions.send_messages:
+            await message.reply(
+                "I can no longer send messages in that channel."
+            )
+            return
+
         try:
-            await target_channel.send(
+            await channel.send(
                 content,
                 allowed_mentions=discord.AllowedMentions.none()
             )
-
-            await message.reply(
-                f"Message successfully sent to {target_channel.mention}.",
-                mention_author=False
+            await message.channel.send(
+                f"Successfully sent the message in **#{channel.name}**."
             )
-
         except discord.Forbidden:
-            await message.reply(
-                "Discord denied permission to send that message.",
-                mention_author=False
-            )
-
+            await message.reply("Discord denied permission to send that message.")
         except discord.HTTPException as error:
-            print(f"CHANNEL MESSAGE ERROR: {repr(error)}")
-
-            await message.reply(
-                "I couldn't send the message because Discord returned an error.",
-                mention_author=False
-            )
+            await message.reply(f"Discord returned an error: {error}")
 
         return
 
-    # ========================================================
-    # MEMBER BANS
-    # ========================================================
+    # =====================================================
+    # BAN MEMBER - INCLUDING USERS OUTSIDE THE SERVER
+    # =====================================================
 
     if action_type == "ban_member":
 
-        if not staff_permissions.ban_members:
+        if not staff_member.guild_permissions.ban_members:
             await message.reply(
-                "You don't have permission to authorize member bans.",
-                mention_author=False
+                "You need the Ban Members permission to do that."
             )
             return
 
         if not bot_member.guild_permissions.ban_members:
             await message.reply(
-                "I need the Ban Members permission to do that.",
-                mention_author=False
+                "I need the Ban Members permission to do that."
             )
             return
 
-        member, error = await find_member(
-            guild,
-            result.get("member_name", "")
-        )
+        target_value = result.get("member_name")
+        target_id = get_user_id(target_value)
 
-        if error:
-            await message.reply(error, mention_author=False)
-            return
+        member = None
+        ban_target = None
 
-        hierarchy_error = check_member_hierarchy(
-            guild,
-            member,
-            staff_member,
-            bot_member
-        )
+        if target_id:
+            if target_id == staff_member.id:
+                await message.reply("You cannot ban yourself.")
+                return
 
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
+            if target_id == bot_member.id:
+                await message.reply("I cannot ban myself.")
+                return
+
+            try:
+                member = await guild.fetch_member(target_id)
+            except discord.NotFound:
+                # The user is not in the server.
+                # A Discord Object allows banning by ID.
+                ban_target = discord.Object(id=target_id)
+            except discord.HTTPException:
+                await message.reply(
+                    "I couldn't verify that user ID. Please try again."
+                )
+                return
+
+        else:
+            member = await find_member(guild, target_value)
+
+            if not member:
+                await message.reply(
+                    "I couldn't find that member. To ban someone who has "
+                    "left the server, provide their numeric Discord User ID."
+                )
+                return
+
+        if member:
+            error = check_member_hierarchy(
+                guild, member, staff_member, bot_member
             )
-            return
+
+            if error:
+                await message.reply(error)
+                return
+
+            ban_target = member
+            target_description = (
+                f"**{member.display_name}** "
+                f"(User ID: `{member.id}`)"
+            )
+        else:
+            target_description = f"Discord User ID `{target_id}`"
 
         reason = result.get("reason") or "No reason provided"
 
         confirmed = await get_confirmation(
             message,
-            f"**Permanently ban:** {member.mention}\n"
-            f"**Reason:** {reason}"
+            f"Permanently ban {target_description}?\n"
+            f"Reason: {reason}"
         )
 
         if not confirmed:
             return
 
-        # Recheck the member and permissions after confirmation.
+        if not staff_member.guild_permissions.ban_members:
+            await message.reply("Your Ban Members permission is no longer available.")
+            return
+
         if not bot_member.guild_permissions.ban_members:
-            await message.reply(
-                "My Ban Members permission is no longer available.",
-                mention_author=False
-            )
+            await message.reply("I no longer have Ban Members permission.")
             return
 
-        if not staff_permissions.ban_members:
-            await message.reply(
-                "Your ban permission is no longer available.",
-                mention_author=False
-            )
-            return
+        # Recheck hierarchy for members still in the server.
+        if member:
+            try:
+                member = await guild.fetch_member(member.id)
+            except discord.NotFound:
+                # The member left while confirmation was pending.
+                ban_target = discord.Object(id=target_id or member.id)
+            except discord.HTTPException:
+                await message.reply("I couldn't recheck the target member.")
+                return
 
-        hierarchy_error = check_member_hierarchy(
-            guild,
-            member,
-            staff_member,
-            bot_member
-        )
+            if isinstance(ban_target, discord.Member):
+                error = check_member_hierarchy(
+                    guild, member, staff_member, bot_member
+                )
 
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
-            return
+                if error:
+                    await message.reply(error)
+                    return
+
+                ban_target = member
 
         try:
             await guild.ban(
-                member,
-                reason=f"Authorized by {staff_member}: {reason}",
+                ban_target,
+                reason=reason,
                 delete_message_seconds=0
             )
 
-            await message.reply(
-                f"Successfully banned **{member}**.",
-                mention_author=False
+            await message.channel.send(
+                f"Successfully banned {target_description}."
             )
 
         except discord.Forbidden:
-            await message.reply(
-                "Discord denied the ban. Check my Ban Members permission "
-                "and role hierarchy.",
-                mention_author=False
-            )
-
+            await message.reply("Discord denied the ban.")
         except discord.HTTPException as error:
-            print(f"BAN ERROR: {repr(error)}")
-
-            await message.reply(
-                "I couldn't ban that member because Discord returned an error.",
-                mention_author=False
-            )
+            await message.reply(f"Discord returned an error: {error}")
 
         return
 
-    # ========================================================
-    # MEMBER TIMEOUTS
-    # ========================================================
+    # =====================================================
+    # UNBAN USER BY DISCORD ID
+    # =====================================================
+
+    if action_type == "unban_member":
+
+        if not staff_member.guild_permissions.ban_members:
+            await message.reply(
+                "You need the Ban Members permission to unban users."
+            )
+            return
+
+        if not bot_member.guild_permissions.ban_members:
+            await message.reply(
+                "I need the Ban Members permission to unban users."
+            )
+            return
+
+        user_id = get_user_id(result.get("user_id"))
+
+        if not user_id:
+            await message.reply(
+                "I need a numeric Discord User ID to unban someone."
+            )
+            return
+
+        reason = result.get("reason") or "No reason provided"
+        user_object = discord.Object(id=user_id)
+
+        try:
+            ban_entry = await guild.fetch_ban(user_object)
+        except discord.NotFound:
+            await message.reply("That user is not currently banned.")
+            return
+        except discord.HTTPException as error:
+            await message.reply(f"I couldn't check the ban: {error}")
+            return
+
+        username = str(ban_entry.user)
+
+        confirmed = await get_confirmation(
+            message,
+            f"Unban **{username}** (User ID: `{user_id}`)?\n"
+            f"Reason: {reason}"
+        )
+
+        if not confirmed:
+            return
+
+        if not staff_member.guild_permissions.ban_members:
+            await message.reply("Your Ban Members permission is no longer available.")
+            return
+
+        if not bot_member.guild_permissions.ban_members:
+            await message.reply("I no longer have Ban Members permission.")
+            return
+
+        try:
+            # Check that the user is still banned.
+            await guild.fetch_ban(user_object)
+
+            await guild.unban(
+                user_object,
+                reason=reason
+            )
+
+            await message.channel.send(
+                f"Successfully unbanned **{username}** (`{user_id}`)."
+            )
+
+        except discord.NotFound:
+            await message.reply("That user is no longer banned.")
+        except discord.Forbidden:
+            await message.reply("Discord denied the unban.")
+        except discord.HTTPException as error:
+            await message.reply(f"Discord returned an error: {error}")
+
+        return
+
+    # =====================================================
+    # TIMEOUT MEMBER
+    # =====================================================
 
     if action_type == "timeout_member":
 
-        if not staff_permissions.moderate_members:
+        if not staff_member.guild_permissions.moderate_members:
             await message.reply(
-                "You don't have permission to authorize member timeouts.",
-                mention_author=False
+                "You need the Moderate Members permission to do that."
             )
             return
 
         if not bot_member.guild_permissions.moderate_members:
             await message.reply(
-                "I need the Moderate Members permission to do that.",
-                mention_author=False
+                "I need the Moderate Members permission to do that."
             )
             return
 
-        member, error = await find_member(
-            guild,
-            result.get("member_name", "")
-        )
+        member = await find_member(guild, result.get("member_name"))
 
-        if error:
-            await message.reply(error, mention_author=False)
+        if not member:
+            await message.reply("I couldn't find that server member.")
             return
 
         duration = result.get("duration_minutes")
 
         if (
-            not isinstance(duration, int)
-            or isinstance(duration, bool)
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
             or duration < 1
             or duration > 40320
         ):
             await message.reply(
-                "The timeout duration must be between 1 minute "
-                "and 28 days.",
-                mention_author=False
+                "Please provide a timeout duration between 1 minute and 28 days."
             )
             return
 
-        hierarchy_error = check_member_hierarchy(
-            guild,
-            member,
-            staff_member,
-            bot_member
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
         )
 
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
+        if error:
+            await message.reply(error)
             return
 
         if member.is_timed_out():
-            await message.reply(
-                f"{member.mention} is already timed out. "
-                f"Remove the existing timeout before applying another.",
-                mention_author=False
-            )
+            await message.reply("That member is already timed out.")
             return
 
         reason = result.get("reason") or "No reason provided"
 
-        if duration < 60:
-            duration_text = f"{duration} minute(s)"
-        elif duration % 1440 == 0:
-            duration_text = f"{duration // 1440} day(s)"
-        elif duration % 60 == 0:
-            duration_text = f"{duration // 60} hour(s)"
-        else:
-            duration_text = f"{duration} minutes"
-
         confirmed = await get_confirmation(
             message,
-            f"**Timeout member:** {member.mention}\n"
-            f"**Duration:** {duration_text}\n"
-            f"**Reason:** {reason}"
+            f"Place **{member.display_name}** in timeout for "
+            f"**{duration} minutes**?\nReason: {reason}"
         )
 
         if not confirmed:
             return
 
+        if not staff_member.guild_permissions.moderate_members:
+            await message.reply("Your Moderate Members permission is no longer available.")
+            return
+
         if not bot_member.guild_permissions.moderate_members:
-            await message.reply(
-                "My Moderate Members permission is no longer available.",
-                mention_author=False
-            )
+            await message.reply("I no longer have Moderate Members permission.")
             return
 
-        if not staff_permissions.moderate_members:
-            await message.reply(
-                "Your Moderate Members permission is no longer available.",
-                mention_author=False
-            )
+        try:
+            member = await guild.fetch_member(member.id)
+        except discord.HTTPException:
+            await message.reply("I couldn't recheck that member.")
             return
 
-        hierarchy_error = check_member_hierarchy(
-            guild,
-            member,
-            staff_member,
-            bot_member
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
         )
 
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
+        if error:
+            await message.reply(error)
+            return
+
+        if member.is_timed_out():
+            await message.reply("That member is already timed out.")
             return
 
         try:
             await member.timeout(
                 timedelta(minutes=duration),
-                reason=f"Authorized by {staff_member}: {reason}"
+                reason=reason
             )
 
-            await message.reply(
-                f"Successfully timed out {member.mention} "
-                f"for **{duration_text}**.",
-                mention_author=False
+            await message.channel.send(
+                f"Successfully timed out **{member.display_name}** "
+                f"for **{duration} minutes**."
             )
 
         except discord.Forbidden:
-            await message.reply(
-                "Discord denied the timeout. Check my Moderate Members "
-                "permission and role hierarchy.",
-                mention_author=False
-            )
-
+            await message.reply("Discord denied the timeout.")
         except discord.HTTPException as error:
-            print(f"TIMEOUT ERROR: {repr(error)}")
-
-            await message.reply(
-                "I couldn't timeout that member because Discord returned an error.",
-                mention_author=False
-            )
+            await message.reply(f"Discord returned an error: {error}")
 
         return
 
-    # ========================================================
-    # REMOVE MEMBER TIMEOUT
-    # ========================================================
+    # =====================================================
+    # REMOVE TIMEOUT
+    # =====================================================
 
     if action_type == "remove_timeout":
 
-        if not staff_permissions.moderate_members:
+        if not staff_member.guild_permissions.moderate_members:
             await message.reply(
-                "You don't have permission to authorize timeout removal.",
-                mention_author=False
+                "You need the Moderate Members permission to do that."
             )
             return
 
         if not bot_member.guild_permissions.moderate_members:
             await message.reply(
-                "I need the Moderate Members permission to do that.",
-                mention_author=False
+                "I need the Moderate Members permission to do that."
             )
             return
 
-        member, error = await find_member(
-            guild,
-            result.get("member_name", "")
+        member = await find_member(guild, result.get("member_name"))
+
+        if not member:
+            await message.reply("I couldn't find that server member.")
+            return
+
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
         )
 
         if error:
-            await message.reply(error, mention_author=False)
-            return
-
-        hierarchy_error = check_member_hierarchy(
-            guild,
-            member,
-            staff_member,
-            bot_member
-        )
-
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
+            await message.reply(error)
             return
 
         if not member.is_timed_out():
-            await message.reply(
-                f"{member.mention} does not currently have an active timeout.",
-                mention_author=False
-            )
+            await message.reply("That member is not currently timed out.")
             return
 
         reason = result.get("reason") or "No reason provided"
 
         confirmed = await get_confirmation(
             message,
-            f"**Remove timeout from:** {member.mention}\n"
-            f"**Reason:** {reason}"
+            f"Remove the timeout from **{member.display_name}**?\n"
+            f"Reason: {reason}"
         )
 
         if not confirmed:
             return
 
+        if not staff_member.guild_permissions.moderate_members:
+            await message.reply("Your Moderate Members permission is no longer available.")
+            return
+
         if not bot_member.guild_permissions.moderate_members:
-            await message.reply(
-                "My Moderate Members permission is no longer available.",
-                mention_author=False
-            )
+            await message.reply("I no longer have Moderate Members permission.")
             return
 
-        if not staff_permissions.moderate_members:
-            await message.reply(
-                "Your Moderate Members permission is no longer available.",
-                mention_author=False
-            )
+        try:
+            member = await guild.fetch_member(member.id)
+        except discord.HTTPException:
+            await message.reply("I couldn't recheck that member.")
             return
 
-        hierarchy_error = check_member_hierarchy(
-            guild,
-            member,
-            staff_member,
-            bot_member
+        error = check_member_hierarchy(
+            guild, member, staff_member, bot_member
         )
 
-        if hierarchy_error:
-            await message.reply(
-                hierarchy_error,
-                mention_author=False
-            )
+        if error:
+            await message.reply(error)
+            return
+
+        if not member.is_timed_out():
+            await message.reply("That member is no longer timed out.")
             return
 
         try:
             await member.timeout(
                 None,
-                reason=f"Authorized by {staff_member}: {reason}"
+                reason=reason
             )
 
-            await message.reply(
-                f"Successfully removed the timeout from {member.mention}.",
-                mention_author=False
+            await message.channel.send(
+                f"Successfully removed the timeout from **{member.display_name}**."
             )
 
         except discord.Forbidden:
-            await message.reply(
-                "Discord denied the timeout removal. Check my Moderate Members "
-                "permission and role hierarchy.",
-                mention_author=False
-            )
-
+            await message.reply("Discord denied the timeout removal.")
         except discord.HTTPException as error:
-            print(f"TIMEOUT REMOVAL ERROR: {repr(error)}")
-
-            await message.reply(
-                "I couldn't remove that timeout because Discord returned an error.",
-                mention_author=False
-            )
+            await message.reply(f"Discord returned an error: {error}")
 
         return
 
-    # ========================================================
+    # =====================================================
     # UNKNOWN ACTION
-    # ========================================================
+    # =====================================================
 
     await message.reply(
-        "I understood your message, but I couldn't identify "
-        "a supported action.",
-        mention_author=False
+        "I understood your request, but I don't recognize the action returned by the AI."
     )
 
 
-# ============================================================
-# START BOT
-# ============================================================
+# =========================================================
+# START BOT AND WEB SERVER
+# =========================================================
 
 if __name__ == "__main__":
-    keep_alive()
-
-    print("DEBUG: Starting Discord AI Assistant...")
-
+    threading.Thread(target=keep_alive, daemon=True).start()
     bot.run(DISCORD_TOKEN)
