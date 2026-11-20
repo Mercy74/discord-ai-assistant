@@ -7,9 +7,17 @@ from datetime import timedelta
 
 from flask import Flask
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from ai_engine import ask_groq
+from memory import (
+    initialize_database,
+    save_message,
+    get_recent_messages,
+    save_memory,
+    get_memories,
+    cleanup_old_conversations,
+)
 
 
 # =========================================================
@@ -49,9 +57,195 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-
-# Pending confirmations are stored in memory while the bot runs.
 pending_confirmations = {}
+
+memory_available = False
+
+
+# =========================================================
+# MEMORY HELPERS
+# =========================================================
+
+async def load_memory_context(guild_id, user_id):
+    """Load recent conversations and long-term memories."""
+
+    if not memory_available:
+        return "", []
+
+    try:
+        history = await get_recent_messages(
+            guild_id,
+            user_id,
+            limit=10
+        )
+
+        memories = await get_memories(
+            guild_id,
+            user_id
+        )
+
+        history_text = ""
+
+        if history:
+            history_text = "\n".join(
+                f"{item['role'].upper()}: {item['content']}"
+                for item in history
+            )
+
+        memory_text = ""
+
+        if memories:
+            memory_text = "\n".join(
+                f"- {item['content']}"
+                for item in memories[:30]
+            )
+
+        context = ""
+
+        if memory_text:
+            context += (
+                "\n\nLONG-TERM MEMORIES ABOUT THIS STAFF MEMBER:\n"
+                + memory_text
+            )
+
+        if history_text:
+            context += (
+                "\n\nRECENT CONVERSATION WITH THIS STAFF MEMBER:\n"
+                + history_text
+            )
+
+        return context, memories
+
+    except Exception as error:
+        print(
+            f"MEMORY READ ERROR: "
+            f"{type(error).__name__}: {error}"
+        )
+        return "", []
+
+
+async def store_conversation(guild_id, user_id, user_text, assistant_text):
+    """Save a completed conversational exchange."""
+
+    if not memory_available:
+        return
+
+    try:
+        await save_message(
+            guild_id,
+            user_id,
+            "user",
+            user_text
+        )
+
+        await save_message(
+            guild_id,
+            user_id,
+            "assistant",
+            assistant_text
+        )
+
+    except Exception as error:
+        print(
+            f"MEMORY SAVE ERROR: "
+            f"{type(error).__name__}: {error}"
+        )
+
+
+async def handle_explicit_memory_request(message, instruction):
+    """Save a long-term memory only when explicitly requested."""
+
+    if not memory_available:
+        await message.reply(
+            "My memory database is currently unavailable. "
+            "I couldn't save that information."
+        )
+        return True
+
+    patterns = (
+        r"^(?:please\s+)?remember\s+that\s+(.+)$",
+        r"^(?:please\s+)?remember\s+(.+)$",
+        r"^(?:please\s+)?save\s+this\s+to\s+(?:your\s+)?memory[:\s]+(.+)$",
+    )
+
+    memory_content = None
+
+    for pattern in patterns:
+        match = re.match(
+            pattern,
+            instruction,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+
+        if match:
+            memory_content = match.group(1).strip()
+            break
+
+    if not memory_content:
+        return False
+
+    if len(memory_content) > 2000:
+        await message.reply(
+            "That memory is too long. Please shorten it to "
+            "2,000 characters or fewer."
+        )
+        return True
+
+    try:
+        memory_id = await save_memory(
+            message.guild.id,
+            message.author.id,
+            memory_content,
+            category="general",
+            protected=False
+        )
+
+        await message.reply(
+            f"Certainly. I've saved that to your long-term memory. "
+            f"(Memory ID: `{memory_id}`)"
+        )
+
+    except Exception as error:
+        print(
+            f"LONG-TERM MEMORY ERROR: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        await message.reply(
+            "I encountered a problem while saving that memory."
+        )
+
+    return True
+
+
+# =========================================================
+# AUTOMATIC CONVERSATION CLEANUP
+# =========================================================
+
+@tasks.loop(hours=24)
+async def daily_memory_cleanup():
+
+    if not memory_available:
+        return
+
+    try:
+        deleted = await cleanup_old_conversations()
+
+        print(
+            f"DEBUG: Daily memory cleanup completed. "
+            f"Deleted {deleted} expired messages."
+        )
+
+    except Exception as error:
+        print(
+            f"MEMORY CLEANUP ERROR: "
+            f"{type(error).__name__}: {error}"
+        )
+
+
+@daily_memory_cleanup.before_loop
+async def before_memory_cleanup():
+    await bot.wait_until_ready()
 
 
 # =========================================================
@@ -176,7 +370,6 @@ async def find_target_channel(guild, channel_name, current_channel):
     if not search or search in current_channel_phrases:
         return current_channel
 
-    # Handle channel mentions.
     channel_match = re.fullmatch(r"<#(\d+)>", search)
 
     if channel_match:
@@ -191,12 +384,10 @@ async def find_target_channel(guild, channel_name, current_channel):
         except discord.HTTPException:
             return None
 
-    # Handle exact channel names.
     for channel in guild.text_channels:
         if channel.name.lower() == search:
             return channel
 
-    # Handle unique partial channel names.
     matches = [
         channel for channel in guild.text_channels
         if search in channel.name.lower()
@@ -213,7 +404,6 @@ async def find_target_channel(guild, channel_name, current_channel):
 # =========================================================
 
 def check_member_hierarchy(guild, target, staff_member, bot_member):
-    """Return an error message if a member cannot be moderated."""
 
     if target.id == guild.owner_id:
         return "I cannot moderate the server owner."
@@ -235,6 +425,7 @@ def check_member_hierarchy(guild, target, staff_member, bot_member):
 
 
 def check_role_hierarchy(role, staff_member, bot_member):
+
     if role.is_default():
         return "I cannot assign or remove the @everyone role."
 
@@ -256,10 +447,6 @@ def check_role_hierarchy(role, staff_member, bot_member):
 # =========================================================
 
 async def get_confirmation(message, description):
-    """
-    Ask for confirmation and wait for a reply from the
-    original staff member in the original channel.
-    """
 
     key = confirmation_key(message)
 
@@ -282,6 +469,7 @@ async def get_confirmation(message, description):
 
         try:
             return await asyncio.wait_for(future, timeout=60)
+
         except asyncio.TimeoutError:
             await message.channel.send(
                 "Confirmation expired. The action was cancelled."
@@ -294,7 +482,6 @@ async def get_confirmation(message, description):
 
 
 async def handle_pending_confirmation(message):
-    """Intercept confirmation replies before sending messages to the AI."""
 
     key = confirmation_key(message)
     future = pending_confirmations.get(key)
@@ -305,11 +492,17 @@ async def handle_pending_confirmation(message):
     if future.done():
         return True
 
-    content = re.sub(r"<@!?\d+>", "", message.content).strip().lower()
+    content = re.sub(
+        r"<@!?\d+>",
+        "",
+        message.content
+    ).strip().lower()
 
     if content in ("yes", "y", "confirm"):
         future.set_result(True)
-        await message.reply("Confirmation received. Processing the action.")
+        await message.reply(
+            "Confirmation received. Processing the action."
+        )
         return True
 
     if content in ("no", "n", "cancel"):
@@ -331,7 +524,32 @@ async def handle_pending_confirmation(message):
 
 @bot.event
 async def on_ready():
+
+    global memory_available
+
     print("DEBUG: Bot is ready!")
+
+    try:
+        await initialize_database()
+        memory_available = True
+
+        print("DEBUG: Ordat memory system is connected!")
+
+    except Exception as error:
+        memory_available = False
+
+        print(
+            f"MEMORY DATABASE ERROR: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        print(
+            "WARNING: Ordat is online, but memory is unavailable."
+        )
+
+    if memory_available and not daily_memory_cleanup.is_running():
+        daily_memory_cleanup.start()
+
     print(f"AI Assistant online: {bot.user}")
     print("Waiting for staff instructions...")
 
@@ -343,28 +561,23 @@ async def on_ready():
 @bot.event
 async def on_message(message):
 
-    # Ignore bots and direct messages.
     if message.author.bot or message.guild is None:
         return
 
     if not bot.is_ready():
         return
 
-    # Handle pending confirmations before requiring a bot mention.
     if await handle_pending_confirmation(message):
         return
 
-    # Only respond to staff.
     if not is_staff(message.author):
         return
 
-    # Normal instructions must mention the bot.
     if bot.user not in message.mentions:
         return
 
     print("DEBUG: Staff instruction received.")
 
-    # Remove the bot mention from the instruction.
     instruction = re.sub(
         rf"<@!?{bot.user.id}>",
         "",
@@ -375,7 +588,10 @@ async def on_message(message):
         await message.reply("What would you like me to do?")
         return
 
-    # Detect references to the channel where the instruction was sent.
+    # Explicit long-term memory requests.
+    if await handle_explicit_memory_request(message, instruction):
+        return
+
     instruction_lower = instruction.lower()
 
     current_channel_patterns = (
@@ -397,13 +613,20 @@ async def on_message(message):
         for pattern in current_channel_patterns
     )
 
+    # Load this staff member's own memory.
+    memory_context, _ = await load_memory_context(
+        message.guild.id,
+        message.author.id
+    )
+
     prompt = (
         f"Server: {message.guild.name}\n"
         f"Server ID: {message.guild.id}\n"
         f"Current channel: #{message.channel.name}\n"
         f"Current channel ID: {message.channel.id}\n"
         f"Staff member: {message.author.display_name}\n"
-        f"Staff user ID: {message.author.id}\n\n"
+        f"Staff user ID: {message.author.id}\n"
+        f"{memory_context}\n\n"
         f"Staff instruction: {instruction}"
     )
 
@@ -421,21 +644,44 @@ async def on_message(message):
         return
 
     except Exception as error:
-        print(f"AI ERROR: {type(error).__name__}: {error}")
+        print(
+            f"AI ERROR: {type(error).__name__}: {error}"
+        )
+
         await message.reply(
             "I encountered an error while processing that request."
         )
         return
 
     if not isinstance(result, dict):
-        await message.reply(str(result))
+        response_text = str(result)
+
+        await message.reply(response_text)
+
+        await store_conversation(
+            message.guild.id,
+            message.author.id,
+            instruction,
+            response_text
+        )
         return
 
     action_type = result.get("type")
 
     if action_type == "message":
-        await message.reply(
-            result.get("content", "I couldn't generate a response.")
+
+        response_text = result.get(
+            "content",
+            "I couldn't generate a response."
+        )
+
+        await message.reply(response_text)
+
+        await store_conversation(
+            message.guild.id,
+            message.author.id,
+            instruction,
+            response_text
         )
         return
 
@@ -499,11 +745,15 @@ async def on_message(message):
             return
 
         if not staff_member.guild_permissions.manage_roles:
-            await message.reply("Your Manage Roles permission is no longer available.")
+            await message.reply(
+                "Your Manage Roles permission is no longer available."
+            )
             return
 
         if not bot_member.guild_permissions.manage_roles:
-            await message.reply("I no longer have Manage Roles permission.")
+            await message.reply(
+                "I no longer have Manage Roles permission."
+            )
             return
 
         error = check_member_hierarchy(
@@ -515,14 +765,23 @@ async def on_message(message):
             return
 
         try:
-            await member.add_roles(role, reason="AI Assistant staff request")
-            await message.channel.send(
-                f"Successfully gave **{role.name}** to **{member.display_name}**."
+            await member.add_roles(
+                role,
+                reason="AI Assistant staff request"
             )
+
+            await message.channel.send(
+                f"Successfully gave **{role.name}** to "
+                f"**{member.display_name}**."
+            )
+
         except discord.Forbidden:
             await message.reply("Discord denied the role assignment.")
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
@@ -576,11 +835,15 @@ async def on_message(message):
             return
 
         if not staff_member.guild_permissions.manage_roles:
-            await message.reply("Your Manage Roles permission is no longer available.")
+            await message.reply(
+                "Your Manage Roles permission is no longer available."
+            )
             return
 
         if not bot_member.guild_permissions.manage_roles:
-            await message.reply("I no longer have Manage Roles permission.")
+            await message.reply(
+                "I no longer have Manage Roles permission."
+            )
             return
 
         error = check_member_hierarchy(
@@ -592,14 +855,23 @@ async def on_message(message):
             return
 
         try:
-            await member.remove_roles(role, reason="AI Assistant staff request")
-            await message.channel.send(
-                f"Successfully removed **{role.name}** from **{member.display_name}**."
+            await member.remove_roles(
+                role,
+                reason="AI Assistant staff request"
             )
+
+            await message.channel.send(
+                f"Successfully removed **{role.name}** from "
+                f"**{member.display_name}**."
+            )
+
         except discord.Forbidden:
             await message.reply("Discord denied the role removal.")
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
@@ -615,8 +887,6 @@ async def on_message(message):
             )
             return
 
-        # Prefer the original staff instruction when it refers
-        # to the channel where that instruction was sent.
         channel_name = result.get("channel_name")
 
         if refers_to_current_channel:
@@ -631,11 +901,15 @@ async def on_message(message):
         content = result.get("message_content", "").strip()
 
         if not channel:
-            await message.reply("I couldn't find that text channel.")
+            await message.reply(
+                "I couldn't find that text channel."
+            )
             return
 
         if not content:
-            await message.reply("The message content cannot be empty.")
+            await message.reply(
+                "The message content cannot be empty."
+            )
             return
 
         permissions = channel.permissions_for(bot_member)
@@ -668,18 +942,25 @@ async def on_message(message):
                 content,
                 allowed_mentions=discord.AllowedMentions.none()
             )
+
             await message.channel.send(
                 f"Successfully sent the message in **#{channel.name}**."
             )
+
         except discord.Forbidden:
-            await message.reply("Discord denied permission to send that message.")
+            await message.reply(
+                "Discord denied permission to send that message."
+            )
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
     # =====================================================
-    # BAN MEMBER - INCLUDING USERS OUTSIDE THE SERVER
+    # BAN MEMBER
     # =====================================================
 
     if action_type == "ban_member":
@@ -703,6 +984,7 @@ async def on_message(message):
         ban_target = None
 
         if target_id:
+
             if target_id == staff_member.id:
                 await message.reply("You cannot ban yourself.")
                 return
@@ -713,8 +995,10 @@ async def on_message(message):
 
             try:
                 member = await guild.fetch_member(target_id)
+
             except discord.NotFound:
                 ban_target = discord.Object(id=target_id)
+
             except discord.HTTPException:
                 await message.reply(
                     "I couldn't verify that user ID. Please try again."
@@ -732,6 +1016,7 @@ async def on_message(message):
                 return
 
         if member:
+
             error = check_member_hierarchy(
                 guild, member, staff_member, bot_member
             )
@@ -741,12 +1026,16 @@ async def on_message(message):
                 return
 
             ban_target = member
+
             target_description = (
                 f"**{member.display_name}** "
                 f"(User ID: `{member.id}`)"
             )
+
         else:
-            target_description = f"Discord User ID `{target_id}`"
+            target_description = (
+                f"Discord User ID `{target_id}`"
+            )
 
         reason = result.get("reason") or "No reason provided"
 
@@ -760,24 +1049,35 @@ async def on_message(message):
             return
 
         if not staff_member.guild_permissions.ban_members:
-            await message.reply("Your Ban Members permission is no longer available.")
+            await message.reply(
+                "Your Ban Members permission is no longer available."
+            )
             return
 
         if not bot_member.guild_permissions.ban_members:
-            await message.reply("I no longer have Ban Members permission.")
+            await message.reply(
+                "I no longer have Ban Members permission."
+            )
             return
 
-        # Recheck hierarchy for members still in the server.
         if member:
+
             try:
                 member = await guild.fetch_member(member.id)
+
             except discord.NotFound:
-                ban_target = discord.Object(id=target_id or member.id)
+                ban_target = discord.Object(
+                    id=target_id or member.id
+                )
+
             except discord.HTTPException:
-                await message.reply("I couldn't recheck the target member.")
+                await message.reply(
+                    "I couldn't recheck the target member."
+                )
                 return
 
             if isinstance(ban_target, discord.Member):
+
                 error = check_member_hierarchy(
                     guild, member, staff_member, bot_member
                 )
@@ -801,13 +1101,16 @@ async def on_message(message):
 
         except discord.Forbidden:
             await message.reply("Discord denied the ban.")
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
     # =====================================================
-    # UNBAN USER BY DISCORD ID
+    # UNBAN MEMBER
     # =====================================================
 
     if action_type == "unban_member":
@@ -837,11 +1140,17 @@ async def on_message(message):
 
         try:
             ban_entry = await guild.fetch_ban(user_object)
+
         except discord.NotFound:
-            await message.reply("That user is not currently banned.")
+            await message.reply(
+                "That user is not currently banned."
+            )
             return
+
         except discord.HTTPException as error:
-            await message.reply(f"I couldn't check the ban: {error}")
+            await message.reply(
+                f"I couldn't check the ban: {error}"
+            )
             return
 
         username = str(ban_entry.user)
@@ -856,11 +1165,15 @@ async def on_message(message):
             return
 
         if not staff_member.guild_permissions.ban_members:
-            await message.reply("Your Ban Members permission is no longer available.")
+            await message.reply(
+                "Your Ban Members permission is no longer available."
+            )
             return
 
         if not bot_member.guild_permissions.ban_members:
-            await message.reply("I no longer have Ban Members permission.")
+            await message.reply(
+                "I no longer have Ban Members permission."
+            )
             return
 
         try:
@@ -876,11 +1189,17 @@ async def on_message(message):
             )
 
         except discord.NotFound:
-            await message.reply("That user is no longer banned.")
+            await message.reply(
+                "That user is no longer banned."
+            )
+
         except discord.Forbidden:
             await message.reply("Discord denied the unban.")
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
@@ -902,10 +1221,15 @@ async def on_message(message):
             )
             return
 
-        member = await find_member(guild, result.get("member_name"))
+        member = await find_member(
+            guild,
+            result.get("member_name")
+        )
 
         if not member:
-            await message.reply("I couldn't find that server member.")
+            await message.reply(
+                "I couldn't find that server member."
+            )
             return
 
         duration = result.get("duration_minutes")
@@ -917,7 +1241,8 @@ async def on_message(message):
             or duration > 40320
         ):
             await message.reply(
-                "Please provide a timeout duration between 1 minute and 28 days."
+                "Please provide a timeout duration between "
+                "1 minute and 28 days."
             )
             return
 
@@ -930,7 +1255,9 @@ async def on_message(message):
             return
 
         if member.is_timed_out():
-            await message.reply("That member is already timed out.")
+            await message.reply(
+                "That member is already timed out."
+            )
             return
 
         reason = result.get("reason") or "No reason provided"
@@ -945,17 +1272,24 @@ async def on_message(message):
             return
 
         if not staff_member.guild_permissions.moderate_members:
-            await message.reply("Your Moderate Members permission is no longer available.")
+            await message.reply(
+                "Your Moderate Members permission is no longer available."
+            )
             return
 
         if not bot_member.guild_permissions.moderate_members:
-            await message.reply("I no longer have Moderate Members permission.")
+            await message.reply(
+                "I no longer have Moderate Members permission."
+            )
             return
 
         try:
             member = await guild.fetch_member(member.id)
+
         except discord.HTTPException:
-            await message.reply("I couldn't recheck that member.")
+            await message.reply(
+                "I couldn't recheck that member."
+            )
             return
 
         error = check_member_hierarchy(
@@ -967,7 +1301,9 @@ async def on_message(message):
             return
 
         if member.is_timed_out():
-            await message.reply("That member is already timed out.")
+            await message.reply(
+                "That member is already timed out."
+            )
             return
 
         try:
@@ -982,9 +1318,14 @@ async def on_message(message):
             )
 
         except discord.Forbidden:
-            await message.reply("Discord denied the timeout.")
+            await message.reply(
+                "Discord denied the timeout."
+            )
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
@@ -1006,10 +1347,15 @@ async def on_message(message):
             )
             return
 
-        member = await find_member(guild, result.get("member_name"))
+        member = await find_member(
+            guild,
+            result.get("member_name")
+        )
 
         if not member:
-            await message.reply("I couldn't find that server member.")
+            await message.reply(
+                "I couldn't find that server member."
+            )
             return
 
         error = check_member_hierarchy(
@@ -1021,7 +1367,9 @@ async def on_message(message):
             return
 
         if not member.is_timed_out():
-            await message.reply("That member is not currently timed out.")
+            await message.reply(
+                "That member is not currently timed out."
+            )
             return
 
         reason = result.get("reason") or "No reason provided"
@@ -1036,17 +1384,24 @@ async def on_message(message):
             return
 
         if not staff_member.guild_permissions.moderate_members:
-            await message.reply("Your Moderate Members permission is no longer available.")
+            await message.reply(
+                "Your Moderate Members permission is no longer available."
+            )
             return
 
         if not bot_member.guild_permissions.moderate_members:
-            await message.reply("I no longer have Moderate Members permission.")
+            await message.reply(
+                "I no longer have Moderate Members permission."
+            )
             return
 
         try:
             member = await guild.fetch_member(member.id)
+
         except discord.HTTPException:
-            await message.reply("I couldn't recheck that member.")
+            await message.reply(
+                "I couldn't recheck that member."
+            )
             return
 
         error = check_member_hierarchy(
@@ -1058,7 +1413,9 @@ async def on_message(message):
             return
 
         if not member.is_timed_out():
-            await message.reply("That member is no longer timed out.")
+            await message.reply(
+                "That member is no longer timed out."
+            )
             return
 
         try:
@@ -1068,13 +1425,19 @@ async def on_message(message):
             )
 
             await message.channel.send(
-                f"Successfully removed the timeout from **{member.display_name}**."
+                f"Successfully removed the timeout from "
+                f"**{member.display_name}**."
             )
 
         except discord.Forbidden:
-            await message.reply("Discord denied the timeout removal.")
+            await message.reply(
+                "Discord denied the timeout removal."
+            )
+
         except discord.HTTPException as error:
-            await message.reply(f"Discord returned an error: {error}")
+            await message.reply(
+                f"Discord returned an error: {error}"
+            )
 
         return
 
@@ -1083,7 +1446,8 @@ async def on_message(message):
     # =====================================================
 
     await message.reply(
-        "I understood your request, but I don't recognize the action returned by the AI."
+        "I understood your request, but I don't recognize "
+        "the action returned by the AI."
     )
 
 
@@ -1092,5 +1456,9 @@ async def on_message(message):
 # =========================================================
 
 if __name__ == "__main__":
-    threading.Thread(target=keep_alive, daemon=True).start()
+    threading.Thread(
+        target=keep_alive,
+        daemon=True
+    ).start()
+
     bot.run(DISCORD_TOKEN)
