@@ -51,8 +51,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 # Pending confirmations are stored in memory while the bot runs.
-# Each confirmation is tied to one staff member, one channel,
-# and one server.
 pending_confirmations = {}
 
 
@@ -126,7 +124,7 @@ async def find_member(guild, member_name):
         if (
             member.name.lower() == search
             or member.display_name.lower() == search
-            or str(member) .lower() == search
+            or str(member).lower() == search
         ):
             return member
 
@@ -153,13 +151,13 @@ def find_role(guild, role_name):
 
 
 async def find_target_channel(guild, channel_name, current_channel):
+    """Find a channel by name, mention, or current-channel reference."""
 
     if channel_name is None:
         return current_channel
 
     search = str(channel_name).strip().lower()
 
-    # References to the channel where the instruction was sent.
     current_channel_phrases = (
         "here",
         "this",
@@ -193,25 +191,12 @@ async def find_target_channel(guild, channel_name, current_channel):
         except discord.HTTPException:
             return None
 
-    # Handle actual channel names.
+    # Handle exact channel names.
     for channel in guild.text_channels:
         if channel.name.lower() == search:
             return channel
 
-    matches = [
-        channel for channel in guild.text_channels
-        if search in channel.name.lower()
-    ]
-
-    if len(matches) == 1:
-        return matches[0]
-
-    return None
-
-    for channel in guild.text_channels:
-        if channel.name.lower() == search:
-            return channel
-
+    # Handle unique partial channel names.
     matches = [
         channel for channel in guild.text_channels
         if search in channel.name.lower()
@@ -365,8 +350,7 @@ async def on_message(message):
     if not bot.is_ready():
         return
 
-    # IMPORTANT:
-    # Handle pending confirmations BEFORE requiring a bot mention.
+    # Handle pending confirmations before requiring a bot mention.
     if await handle_pending_confirmation(message):
         return
 
@@ -390,6 +374,28 @@ async def on_message(message):
     if not instruction:
         await message.reply("What would you like me to do?")
         return
+
+    # Detect references to the channel where the instruction was sent.
+    instruction_lower = instruction.lower()
+
+    current_channel_patterns = (
+        r"\bhere\b",
+        r"\bin this channel\b",
+        r"\bto this channel\b",
+        r"\bin the current channel\b",
+        r"\bto the current channel\b",
+        r"\bin the same channel\b",
+        r"\bto the same channel\b",
+        r"\bin this text channel\b",
+        r"\bto this text channel\b",
+        r"\bin the channel i'm in\b",
+        r"\bin the channel i am in\b"
+    )
+
+    refers_to_current_channel = any(
+        re.search(pattern, instruction_lower)
+        for pattern in current_channel_patterns
+    )
 
     prompt = (
         f"Server: {message.guild.name}\n"
@@ -609,9 +615,16 @@ async def on_message(message):
             )
             return
 
+        # Prefer the original staff instruction when it refers
+        # to the channel where that instruction was sent.
+        channel_name = result.get("channel_name")
+
+        if refers_to_current_channel:
+            channel_name = "this channel"
+
         channel = await find_target_channel(
             guild,
-            result.get("channel_name"),
+            channel_name,
             message.channel
         )
 
@@ -640,10 +653,6 @@ async def on_message(message):
         )
 
         if not confirmed:
-            return
-
-        if not bot_member.guild_permissions.send_messages:
-            await message.reply("I no longer have permission to send messages.")
             return
 
         permissions = channel.permissions_for(bot_member)
@@ -705,8 +714,6 @@ async def on_message(message):
             try:
                 member = await guild.fetch_member(target_id)
             except discord.NotFound:
-                # The user is not in the server.
-                # A Discord Object allows banning by ID.
                 ban_target = discord.Object(id=target_id)
             except discord.HTTPException:
                 await message.reply(
@@ -765,7 +772,6 @@ async def on_message(message):
             try:
                 member = await guild.fetch_member(member.id)
             except discord.NotFound:
-                # The member left while confirmation was pending.
                 ban_target = discord.Object(id=target_id or member.id)
             except discord.HTTPException:
                 await message.reply("I couldn't recheck the target member.")
@@ -858,7 +864,6 @@ async def on_message(message):
             return
 
         try:
-            # Check that the user is still banned.
             await guild.fetch_ban(user_object)
 
             await guild.unban(
