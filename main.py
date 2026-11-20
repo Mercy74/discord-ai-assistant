@@ -153,11 +153,32 @@ def find_role(guild, role_name):
 
 
 async def find_target_channel(guild, channel_name, current_channel):
-    search = str(channel_name).strip().lower()
 
-    if not search or search in ("here", "this channel", "current channel"):
+    if channel_name is None:
         return current_channel
 
+    search = str(channel_name).strip().lower()
+
+    # References to the channel where the instruction was sent.
+    current_channel_phrases = (
+        "here",
+        "this",
+        "this channel",
+        "the channel",
+        "current channel",
+        "the current channel",
+        "same channel",
+        "the same channel",
+        "this text channel",
+        "the channel i'm in",
+        "the channel i am in",
+        "where the instruction was sent"
+    )
+
+    if not search or search in current_channel_phrases:
+        return current_channel
+
+    # Handle channel mentions.
     channel_match = re.fullmatch(r"<#(\d+)>", search)
 
     if channel_match:
@@ -171,6 +192,21 @@ async def find_target_channel(guild, channel_name, current_channel):
             return await guild.fetch_channel(channel_id)
         except discord.HTTPException:
             return None
+
+    # Handle actual channel names.
+    for channel in guild.text_channels:
+        if channel.name.lower() == search:
+            return channel
+
+    matches = [
+        channel for channel in guild.text_channels
+        if search in channel.name.lower()
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
 
     for channel in guild.text_channels:
         if channel.name.lower() == search:
