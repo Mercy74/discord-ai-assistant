@@ -26,6 +26,7 @@ _pool = None
 # DATABASE CONNECTION
 # =========================================================
 
+
 async def initialize_database():
     global _pool
 
@@ -41,6 +42,25 @@ async def initialize_database():
         max_size=3,
         command_timeout=30,
         ssl="require",
+    )
+
+    # Create persistent storage-warning tracking.
+    await _pool.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ordat_storage_alert_state (
+            id SMALLINT PRIMARY KEY CHECK (id = 1),
+            warning_sent BOOLEAN NOT NULL DEFAULT FALSE
+        )
+        """
+    )
+
+    await _pool.execute(
+        """
+        INSERT INTO ordat_storage_alert_state
+            (id, warning_sent)
+        VALUES (1, FALSE)
+        ON CONFLICT (id) DO NOTHING
+        """
     )
 
     print("DEBUG: Memory database connected.")
@@ -454,3 +474,35 @@ async def get_database_size():
     )
 
     return size
+
+
+# =========================================================
+# STORAGE WARNING STATE
+# =========================================================
+
+async def storage_warning_sent():
+    pool = await get_pool()
+
+    result = await pool.fetchval(
+        """
+        SELECT warning_sent
+        FROM ordat_storage_alert_state
+        WHERE id = 1
+        """
+    )
+
+    return bool(result)
+
+
+async def set_storage_warning_sent(sent):
+    pool = await get_pool()
+
+    await pool.execute(
+        """
+        UPDATE ordat_storage_alert_state
+        SET warning_sent = $1
+        WHERE id = 1
+        """,
+        bool(sent),
+    )
+
