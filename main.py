@@ -1121,11 +1121,17 @@ async def on_message(message):
         await message.reply("What would you like me to do?")
         return
 
+
     # Explicit long-term memory requests.
     if await handle_explicit_memory_request(message, instruction):
         return
 
+    # Memory management commands.
+    if await handle_memory_management_request(message, instruction):
+        return
+
     instruction_lower = instruction.lower()
+
 
     current_channel_patterns = (
         r"\bhere\b",
