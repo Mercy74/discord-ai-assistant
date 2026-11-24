@@ -375,6 +375,81 @@ async def delete_server_memory(
     return result.endswith("1")
 
 
+async def update_memory(
+    memory_id,
+    guild_id,
+    user_id,
+    new_content,
+    allow_protected=False,
+):
+    """Update a personal memory owned by the specified user."""
+
+    new_content = new_content.strip()
+
+    if not new_content or len(new_content) > 2000:
+        return False
+
+    pool = await get_pool()
+
+    result = await pool.execute(
+        """
+        UPDATE memories
+        SET content = $1,
+            updated_at = NOW()
+        WHERE id = $2
+          AND guild_id = $3
+          AND user_id = $4
+          AND category = ANY($5::text[])
+          AND ($6 OR protected = FALSE)
+        """,
+        new_content,
+        memory_id,
+        str(guild_id),
+        str(user_id),
+        list(PERSONAL_MEMORY_CATEGORIES),
+        bool(allow_protected),
+    )
+
+    return result.endswith("1")
+
+
+async def update_server_memory(
+    memory_id,
+    guild_id,
+    new_content,
+    allow_protected=False,
+):
+    """Update a shared or behavioral memory for the server."""
+
+    new_content = new_content.strip()
+
+    if not new_content or len(new_content) > 2000:
+        return False
+
+    pool = await get_pool()
+
+    result = await pool.execute(
+        """
+        UPDATE memories
+        SET content = $1,
+            updated_at = NOW()
+        WHERE id = $2
+          AND guild_id = $3
+          AND user_id = $4
+          AND category = ANY($5::text[])
+          AND ($6 OR protected = FALSE)
+        """,
+        new_content,
+        memory_id,
+        str(guild_id),
+        SERVER_MEMORY_USER_ID,
+        list(SERVER_MEMORY_CATEGORIES),
+        bool(allow_protected),
+    )
+
+    return result.endswith("1")
+
+
 async def delete_memory(
     memory_id,
     guild_id,
