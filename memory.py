@@ -386,13 +386,13 @@ async def delete_memory(
 # AUTOMATIC CONVERSATION CLEANUP
 # =========================================================
 
+
 async def cleanup_old_conversations():
     """
-    Delete conversation history older than the retention period.
+    Delete conversation history older than the retention period
+    and check the database size.
 
-    IMPORTANT:
-    This function does not delete personal memories,
-    shared memories, behavioral memories, or protected memories.
+    Long-term memories are never deleted by this function.
     """
 
     pool = await get_pool()
@@ -406,9 +406,38 @@ async def cleanup_old_conversations():
     )
 
     try:
-        return int(result.split()[-1])
+        deleted = int(result.split()[-1])
     except (ValueError, IndexError):
-        return 0
+        deleted = 0
+
+    # Check Supabase database size.
+    try:
+        size_bytes = await get_database_size()
+        size_mb = size_bytes / (1024 * 1024)
+
+        warning_limit_mb = 400
+
+        if size_mb >= warning_limit_mb:
+            print(
+                "WARNING: Ordat database is approaching "
+                f"its Supabase quota! "
+                f"Current size: {size_mb:.1f} MB. "
+                f"Warning threshold: {warning_limit_mb} MB."
+            )
+        else:
+            print(
+                "DEBUG: Ordat database size: "
+                f"{size_mb:.1f} MB "
+                f"(warning at {warning_limit_mb} MB)."
+            )
+
+    except Exception as error:
+        print(
+            "WARNING: Could not check Supabase database size:",
+            repr(error),
+        )
+
+    return deleted
 
 
 # =========================================================
