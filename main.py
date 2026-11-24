@@ -403,11 +403,16 @@ async def handle_memory_management_request(message, instruction):
         instruction,
         flags=re.IGNORECASE,
     )
+
+    # =====================================================
+    # MATCH PERSONAL MEMORY EDIT COMMAND
+    # =====================================================
     personal_edit_match = re.fullmatch(
-        r"(?:please\s+)?edit\s+(?:my\s+)?memory\s+#?(\d+)\s*:\s*(.+)",
+        r"(?:please\s+)?edit\s+(?:(?:my|personal)\s+)?memory\s+#?(\d+)\s*:\s*(.+)",
         instruction,
         flags=re.IGNORECASE | re.DOTALL,
     )
+
 
     server_edit_match = re.fullmatch(
         r"(?:please\s+)?edit\s+(?:the\s+)?server\s+memory\s+#?(\d+)\s*:\s*(.+)",
