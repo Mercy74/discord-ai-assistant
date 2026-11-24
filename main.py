@@ -567,6 +567,75 @@ async def handle_memory_management_request(message, instruction):
 
             return True
 
+        # =====================================================
+        # EDIT PERSONAL MEMORY
+        # =====================================================
+        
+        if personal_edit_match:
+            memory_id = int(personal_edit_match.group(1))
+            new_content = personal_edit_match.group(2).strip()
+
+            if not new_content or len(new_content) > 2000:
+                await message.reply(
+                    "The replacement memory must be between "
+                    "1 and 2000 characters."
+                )
+                return True
+
+            memories = await get_memories(
+                message.guild.id,
+                message.author.id,
+            )
+
+            existing_memory = next(
+                (
+                    item for item in memories
+                    if int(item["id"]) == memory_id
+                ),
+                None,
+            )
+
+            if existing_memory is None:
+                await message.reply(
+                    "That personal memory was not found "
+                    "or does not belong to you."
+                )
+                return True
+
+            if existing_memory["protected"]:
+                await message.reply(
+                    "That memory is protected and cannot be edited."
+                )
+                return True
+
+            confirmed = await get_confirmation(
+                message,
+                f"Edit your personal memory ID `{memory_id}` "
+                f"using the replacement text you provided?"
+            )
+
+            if not confirmed:
+                return True
+
+            updated = await update_memory(
+                memory_id,
+                message.guild.id,
+                message.author.id,
+                new_content,
+            )
+
+            if updated:
+                await message.reply(
+                    f"Personal memory ID `{memory_id}` updated."
+                )
+            else:
+                await message.reply(
+                    "I couldn't update that memory. "
+                    "It may have changed or become protected."
+                )
+
+            return True
+
         # -------------------------------------------------
         # DELETE PERSONAL MEMORY
         # -------------------------------------------------
@@ -602,6 +671,73 @@ async def handle_memory_management_request(message, instruction):
                     "I couldn't delete that memory. "
                     "It may not exist, may not belong to you, "
                     "or may be protected."
+                )
+
+            return True
+
+        # =====================================================
+        # EDIT SERVER MEMORY
+        # =====================================================
+        
+        if server_edit_match:
+            memory_id = int(server_edit_match.group(1))
+            new_content = server_edit_match.group(2).strip()
+
+            if not new_content or len(new_content) > 2000:
+                await message.reply(
+                    "The replacement memory must be between "
+                    "1 and 2000 characters."
+                )
+                return True
+
+            memories = await get_server_memories(
+                message.guild.id,
+            )
+
+            existing_memory = next(
+                (
+                    item for item in memories
+                    if int(item["id"]) == memory_id
+                ),
+                None,
+            )
+
+            if existing_memory is None:
+                await message.reply(
+                    "That server memory was not found."
+                )
+                return True
+
+            if existing_memory["protected"]:
+                await message.reply(
+                    "That server memory is protected "
+                    "and cannot be edited."
+                )
+                return True
+
+            confirmed = await get_confirmation(
+                message,
+                f"Edit server memory ID `{memory_id}` "
+                f"using the replacement text you provided?"
+            )
+
+            if not confirmed:
+                return True
+
+            updated = await update_server_memory(
+                memory_id,
+                message.guild.id,
+                new_content,
+            )
+
+            if updated:
+                await message.reply(
+                    f"Server memory ID `{memory_id}` updated."
+                )
+            else:
+                await message.reply(
+                    "I couldn't update that server memory. "
+                    "It may have changed or become protected."
                 )
 
             return True
