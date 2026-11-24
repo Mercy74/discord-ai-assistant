@@ -392,7 +392,7 @@ async def daily_memory_cleanup():
         size_bytes = await get_database_size()
         size_mb = size_bytes / (1024 * 1024)
 
-        warning_limit_mb = 10
+        warning_limit_mb = 400
 
         # Read the channel ID from Render.
         channel_id_setting = os.getenv(
