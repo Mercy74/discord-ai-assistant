@@ -370,6 +370,278 @@ async def handle_explicit_memory_request(message, instruction):
     return True
 
 
+# =========================================================
+# MEMORY MANAGEMENT COMMANDS
+# =========================================================
+
+async def handle_memory_management_request(message, instruction):
+
+    instruction = instruction.strip()
+
+    personal_list_match = re.fullmatch(
+        r"(?:show|list|view)\s+my\s+memories",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+
+    server_list_match = re.fullmatch(
+        r"(?:show|list|view)\s+(?:the\s+)?server\s+memories",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+
+    personal_delete_match = re.fullmatch(
+        r"(?:please\s+)?forget\s+(?:my\s+)?memory\s+#?(\d+)",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+
+    server_delete_match = re.fullmatch(
+        r"(?:please\s+)?forget\s+(?:the\s+)?server\s+memory\s+#?(\d+)",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+
+    # Not a memory-management command.
+    if not any((
+        personal_list_match,
+        server_list_match,
+        personal_delete_match,
+        server_delete_match,
+    )):
+        return False
+
+    if message.guild is None:
+        await message.reply(
+            "Memory management is only available in a server."
+        )
+        return True
+
+    if not memory_available:
+        await message.reply(
+            "My memory database is currently unavailable."
+        )
+        return True
+
+    try:
+
+        # -------------------------------------------------
+        # SHOW PERSONAL MEMORIES
+        # -------------------------------------------------
+
+        if personal_list_match:
+
+            memories = await get_memories(
+                message.guild.id,
+                message.author.id,
+            )
+
+            if not memories:
+                await message.reply(
+                    "I don't currently have any personal "
+                    "memories saved for you."
+                )
+                return True
+
+            lines = [
+                f"Your personal memories "
+                f"({len(memories)} total):"
+            ]
+
+            for item in memories:
+
+                protected_label = (
+                    " [PROTECTED]"
+                    if item["protected"]
+                    else ""
+                )
+
+                lines.append(
+                    f"ID {item['id']}{protected_label}\n"
+                    f"{item['content']}"
+                )
+
+            output = "\n\n".join(lines)
+
+            # Send the list privately in chunks.
+            try:
+                while output:
+                    chunk = output[:1800]
+                    output = output[1800:]
+
+                    await message.author.send(
+                        chunk,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+
+                await message.reply(
+                    "I've sent your personal memories "
+                    "to you in a private DM."
+                )
+
+            except discord.Forbidden:
+                await message.reply(
+                    "I couldn't DM you. Please enable "
+                    "server-member DMs and try again."
+                )
+
+            return True
+
+        # -------------------------------------------------
+        # SHOW SERVER MEMORIES
+        # -------------------------------------------------
+
+        if server_list_match:
+
+            memories = await get_server_memories(
+                message.guild.id,
+            )
+
+            if not memories:
+                await message.reply(
+                    "This server doesn't currently have "
+                    "any shared or behavioral memories."
+                )
+                return True
+
+            lines = [
+                f"Server memories ({len(memories)} total):"
+            ]
+
+            for item in memories:
+
+                category = item["category"].capitalize()
+
+                protected_label = (
+                    " [PROTECTED]"
+                    if item["protected"]
+                    else ""
+                )
+
+                lines.append(
+                    f"ID {item['id']} — {category}"
+                    f"{protected_label}\n"
+                    f"{item['content']}"
+                )
+
+            output = "\n\n".join(lines)
+
+            # Server memories are also sent privately
+            # so ordinary members cannot read staff data.
+            try:
+                while output:
+                    chunk = output[:1800]
+                    output = output[1800:]
+
+                    await message.author.send(
+                        chunk,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+
+                await message.reply(
+                    "I've sent the server memories "
+                    "to you in a private DM."
+                )
+
+            except discord.Forbidden:
+                await message.reply(
+                    "I couldn't DM you. Please enable "
+                    "server-member DMs and try again."
+                )
+
+            return True
+
+        # -------------------------------------------------
+        # DELETE PERSONAL MEMORY
+        # -------------------------------------------------
+
+        if personal_delete_match:
+
+            memory_id = int(
+                personal_delete_match.group(1)
+            )
+
+            confirmed = await get_confirmation(
+                message,
+                f"Delete your personal memory "
+                f"ID `{memory_id}`?",
+            )
+
+            if not confirmed:
+                return True
+
+            deleted = await delete_memory(
+                memory_id,
+                message.guild.id,
+                message.author.id,
+            )
+
+            if deleted:
+                await message.reply(
+                    f"Your personal memory ID "
+                    f"`{memory_id}` has been deleted."
+                )
+            else:
+                await message.reply(
+                    "I couldn't delete that memory. "
+                    "It may not exist, may not belong to you, "
+                    "or may be protected."
+                )
+
+            return True
+
+        # -------------------------------------------------
+        # DELETE SERVER MEMORY
+        # -------------------------------------------------
+
+        if server_delete_match:
+
+            memory_id = int(
+                server_delete_match.group(1)
+            )
+
+            confirmed = await get_confirmation(
+                message,
+                f"Delete server memory "
+                f"ID `{memory_id}`?",
+            )
+
+            if not confirmed:
+                return True
+
+            deleted = await delete_server_memory(
+                memory_id,
+                message.guild.id,
+            )
+
+            if deleted:
+                await message.reply(
+                    f"Server memory ID `{memory_id}` "
+                    f"has been deleted."
+                )
+            else:
+                await message.reply(
+                    "I couldn't delete that server memory. "
+                    "It may not exist or may be protected."
+                )
+
+            return True
+
+    except Exception as error:
+
+        print(
+            "MEMORY MANAGEMENT ERROR: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        await message.reply(
+            "I encountered an error while managing memories."
+        )
+
+        return True
+
+    return True
+
 
 # =========================================================
 # AUTOMATIC CONVERSATION CLEANUP AND STORAGE ALERT
