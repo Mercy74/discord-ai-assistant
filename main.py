@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands, tasks
 
 from ai_engine import ask_groq
+
 from memory import (
     initialize_database,
     save_message,
@@ -19,6 +20,9 @@ from memory import (
     save_server_memory,
     get_server_memories,
     cleanup_old_conversations,
+    get_database_size,
+    storage_warning_sent,
+    set_storage_warning_sent,
 )
 
 
@@ -364,8 +368,9 @@ async def handle_explicit_memory_request(message, instruction):
     return True
 
 
+
 # =========================================================
-# AUTOMATIC CONVERSATION CLEANUP
+# AUTOMATIC CONVERSATION CLEANUP AND STORAGE ALERT
 # =========================================================
 
 @tasks.loop(hours=24)
@@ -375,6 +380,7 @@ async def daily_memory_cleanup():
         return
 
     try:
+        # Clean up old conversation messages.
         deleted = await cleanup_old_conversations()
 
         print(
@@ -382,9 +388,106 @@ async def daily_memory_cleanup():
             f"Deleted {deleted} expired messages."
         )
 
+        # Check current database size.
+        size_bytes = await get_database_size()
+        size_mb = size_bytes / (1024 * 1024)
+
+        warning_limit_mb = 400
+
+        # Read the channel ID from Render.
+        channel_id_setting = os.getenv(
+            "STORAGE_ALERT_LOG_CHANNEL"
+        )
+
+        # If the database is below the threshold,
+        # reset the warning so it can be sent again later.
+        if size_mb < warning_limit_mb:
+
+            if await storage_warning_sent():
+                await set_storage_warning_sent(False)
+
+                print(
+                    "DEBUG: Storage warning reset. "
+                    "Database is below 400 MB."
+                )
+
+            return
+
+        # The database has reached or exceeded 400 MB.
+        print(
+            f"WARNING: Ordat database is at "
+            f"{size_mb:.1f} MB. "
+            f"Storage warning threshold: "
+            f"{warning_limit_mb} MB."
+        )
+
+        # Do not send another warning while already alerted.
+        if await storage_warning_sent():
+            return
+
+        # Make sure the channel ID exists.
+        if not channel_id_setting:
+            print(
+                "STORAGE ALERT ERROR: "
+                "STORAGE_ALERT_LOG_CHANNEL is not configured."
+            )
+            return
+
+        try:
+            channel_id = int(channel_id_setting)
+
+        except ValueError:
+            print(
+                "STORAGE ALERT ERROR: "
+                "STORAGE_ALERT_LOG_CHANNEL must be a numeric "
+                "Discord channel ID."
+            )
+            return
+
+        # Find the configured Discord channel.
+        channel = bot.get_channel(channel_id)
+
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+
+            except discord.HTTPException as error:
+                print(
+                    "STORAGE ALERT ERROR: "
+                    f"Could not find the alert channel: {error}"
+                )
+                return
+
+        # Ensure the destination supports sending messages.
+        if not hasattr(channel, "send"):
+            print(
+                "STORAGE ALERT ERROR: "
+                "The configured channel cannot receive messages."
+            )
+            return
+
+        # Send the warning to the configured channel.
+        await channel.send(
+            "**⚠️ Ordat Database Storage Warning**\n\n"
+            f"Database size: **{size_mb:.1f} MB**\n"
+            f"Warning threshold: **{warning_limit_mb} MB**\n\n"
+            "Ordat's Supabase database is approaching "
+            "its storage limit. Please review the database "
+            "and remove unnecessary data if appropriate.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+        # Save the alert state only after the message succeeds.
+        await set_storage_warning_sent(True)
+
+        print(
+            "DEBUG: Storage warning sent successfully "
+            "to the configured Discord channel."
+        )
+
     except Exception as error:
         print(
-            f"MEMORY CLEANUP ERROR: "
+            "STORAGE ALERT / CLEANUP ERROR: "
             f"{type(error).__name__}: {error}"
         )
 
