@@ -407,9 +407,19 @@ def confirmation_key(message):
 
 
 def is_staff(member):
-    permissions = member.guild_permissions
-    return permissions.administrator or permissions.manage_guild
+    if member.guild is None:
+        return False
 
+    # Always recognize the actual Discord server owner.
+    if member.id == member.guild.owner_id:
+        return True
+
+    permissions = member.guild_permissions
+
+    return (
+        permissions.administrator
+        or permissions.manage_guild
+    )
 
 def get_bot_member(guild):
     if bot.user is None:
