@@ -422,6 +422,8 @@ async def handle_memory_management_request(message, instruction):
         server_list_match,
         personal_delete_match,
         server_delete_match,
+        personal_edit_match,
+        server_edit_match,
     )):
         return False
 
