@@ -381,13 +381,29 @@ async def handle_memory_management_request(message, instruction):
     instruction = instruction.strip()
 
     personal_list_match = re.fullmatch(
-        r"(?:show|list|view)\s+my\s+memories",
+        r"(?:show|list|view|display)\s+(?:me\s+)?"
+        r"(?:my\s+memories|my\s+personal\s+memories|"
+        r"personal\s+memories)"
+        r"|what\s+(?:are\s+)?(?:my\s+)?"
+        r"(?:personal\s+)?memories(?:\s+do\s+i\s+have)?"
+        r"|what\s+personal\s+memories\s+do\s+i\s+have"
+        r"|what\s+do\s+you\s+remember\s+about\s+me",
         instruction,
         flags=re.IGNORECASE,
     )
 
     server_list_match = re.fullmatch(
-        r"(?:show|list|view)\s+(?:the\s+)?server\s+memories",
+        r"(?:show|list|view|display)\s+(?:the\s+)?server\s+memories",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+
+    all_memories_match = re.fullmatch(
+        r"(?:show|list|view|display)\s+(?:me\s+)?"
+        r"(?:all\s+)?(?:the\s+)?(?:current\s+)?memories"
+        r"|what\s+(?:are\s+)?(?:all\s+)?(?:the\s+)?"
+        r"(?:current\s+)?memories"
+        r"|what\s+are\s+all\s+the\s+memories",
         instruction,
         flags=re.IGNORECASE,
     )
@@ -425,13 +441,14 @@ async def handle_memory_management_request(message, instruction):
     if not any((
         personal_list_match,
         server_list_match,
+        all_memories_match,
         personal_delete_match,
         server_delete_match,
         personal_edit_match,
         server_edit_match,
     )):
         return False
-
+        
     if message.guild is None:
         await message.reply(
             "Memory management is only available in a server."
@@ -445,6 +462,102 @@ async def handle_memory_management_request(message, instruction):
         return True
 
     try:
+
+        # -------------------------------------------------
+        # SHOW ALL MEMORIES
+        # -------------------------------------------------
+
+        if all_memories_match:
+
+            personal_memories = await get_memories(
+                message.guild.id,
+                message.author.id,
+            )
+
+            server_memories = await get_server_memories(
+                message.guild.id,
+            )
+
+            lines = ["All memories"]
+
+            # ---------------------------------------------
+            # SERVER MEMORIES — SHOWN NORMALLY
+            # ---------------------------------------------
+
+            lines.append(
+                f"\nServer memories ({len(server_memories)} total):"
+            )
+
+            if server_memories:
+                for item in server_memories:
+
+                    category = item["category"].capitalize()
+
+                    protected_label = (
+                        " [PROTECTED]"
+                        if item["protected"]
+                        else ""
+                    )
+
+                    lines.append(
+                        f"ID {item['id']} — {category}"
+                        f"{protected_label}\n"
+                        f"{item['content']}"
+                    )
+            else:
+                lines.append("No server memories saved.")
+
+            # ---------------------------------------------
+            # PERSONAL MEMORIES — REDACTED
+            # ---------------------------------------------
+
+            lines.append(
+                f"\nPersonal memories "
+                f"({len(personal_memories)} total):"
+            )
+
+            if personal_memories:
+                for item in personal_memories:
+
+                    protected_label = (
+                        " [PROTECTED]"
+                        if item["protected"]
+                        else ""
+                    )
+
+                    lines.append(
+                        f"ID {item['id']}{protected_label} "
+                        f"— [REDACTED]"
+                    )
+            else:
+                lines.append("No personal memories saved.")
+
+            output = "\n\n".join(lines)
+
+            # Send the combined list privately.
+            try:
+                while output:
+                    chunk = output[:1800]
+                    output = output[1800:]
+
+                    await message.author.send(
+                        chunk,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+
+                await message.reply(
+                    "I've sent all server memories and "
+                    "your redacted personal-memory list "
+                    "to you in a private DM."
+                )
+
+            except discord.Forbidden:
+                await message.reply(
+                    "I couldn't DM you. Please enable "
+                    "server-member DMs and try again."
+                )
+
+            return True
 
         # -------------------------------------------------
         # SHOW PERSONAL MEMORIES
