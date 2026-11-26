@@ -507,12 +507,13 @@ async def handle_memory_management_request(message, instruction):
             else:
                 lines.append("No server memories saved.")
 
+
             # ---------------------------------------------
-            # PERSONAL MEMORIES — REDACTED
+            # PERSONAL MEMORIES — FULL CONTENT IN DM
             # ---------------------------------------------
 
             lines.append(
-                f"\nPersonal memories "
+                f"\nYour personal memories "
                 f"({len(personal_memories)} total):"
             )
 
@@ -526,8 +527,8 @@ async def handle_memory_management_request(message, instruction):
                     )
 
                     lines.append(
-                        f"ID {item['id']}{protected_label} "
-                        f"— [REDACTED]"
+                        f"ID {item['id']}{protected_label}\n"
+                        f"{item['content']}"
                     )
             else:
                 lines.append("No personal memories saved.")
@@ -547,8 +548,8 @@ async def handle_memory_management_request(message, instruction):
 
                 await message.reply(
                     "I've sent all server memories and "
-                    "your redacted personal-memory list "
-                    "to you in a private DM."
+                    "your personal memories to you "
+                    "in a private DM."
                 )
 
             except discord.Forbidden:
@@ -558,6 +559,7 @@ async def handle_memory_management_request(message, instruction):
                 )
 
             return True
+
 
         # -------------------------------------------------
         # SHOW PERSONAL MEMORIES
