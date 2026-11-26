@@ -244,6 +244,7 @@ async def handle_explicit_memory_request(message, instruction):
 
     else:
         patterns = (
+            r"^(?:please\s+)?write\s+that\s+down[:\s]+(.+)$",
             r"^(?:please\s+)?write\s+this\s+down[:\s]+(.+)$",
             r"^(?:please\s+)?remember\s+that\s+(.+)$",
             r"^(?:please\s+)?remember\s+(.+)$",
