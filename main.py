@@ -398,15 +398,17 @@ async def handle_memory_management_request(message, instruction):
         flags=re.IGNORECASE,
     )
 
+
     all_memories_match = re.fullmatch(
         r"(?:show|list|view|display)\s+(?:me\s+)?"
         r"(?:all\s+)?(?:the\s+)?(?:current\s+)?memories"
         r"|what\s+(?:are\s+)?(?:all\s+)?(?:the\s+)?"
-        r"(?:current\s+)?memories"
+        r"(?:current\s+)?memories(?:\s+are)?"
         r"|what\s+are\s+all\s+the\s+memories",
         instruction,
         flags=re.IGNORECASE,
     )
+
 
     personal_delete_match = re.fullmatch(
         r"(?:please\s+)?forget\s+(?:my\s+)?memory\s+#?(\d+)",
