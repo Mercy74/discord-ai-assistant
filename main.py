@@ -242,24 +242,36 @@ async def handle_explicit_memory_request(message, instruction):
         category = explicit_match.group(1).lower()
         memory_content = explicit_match.group(2).strip()
 
+
     else:
-        patterns = (
+        # "Write this down" always saves as a personal memory.
+        write_this_down_match = re.match(
             r"^(?:please\s+)?write\s+this\s+down[:\s]+(.+)$",
-            r"^(?:please\s+)?remember\s+that\s+(.+)$",
-            r"^(?:please\s+)?remember\s+(.+)$",
-            r"^(?:please\s+)?save\s+this\s+to\s+(?:your\s+)?memory[:\s]+(.+)$",
+            instruction,
+            flags=re.IGNORECASE | re.DOTALL
         )
 
-        for pattern in patterns:
-            match = re.match(
-                pattern,
-                instruction,
-                flags=re.IGNORECASE | re.DOTALL
+        if write_this_down_match:
+            memory_content = write_this_down_match.group(1).strip()
+            category = "personal"
+
+        else:
+            patterns = (
+                r"^(?:please\s+)?remember\s+that\s+(.+)$",
+                r"^(?:please\s+)?remember\s+(.+)$",
+                r"^(?:please\s+)?save\s+this\s+to\s+(?:your\s+)?memory[:\s]+(.+)$",
             )
 
-            if match:
-                memory_content = match.group(1).strip()
-                break
+            for pattern in patterns:
+                match = re.match(
+                    pattern,
+                    instruction,
+                    flags=re.IGNORECASE | re.DOTALL
+                )
+
+                if match:
+                    memory_content = match.group(1).strip()
+                    break
 
     if not memory_content:
         return False
