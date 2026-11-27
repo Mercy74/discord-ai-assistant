@@ -1487,30 +1487,29 @@ async def on_message(message):
     if await handle_memory_management_request(message, instruction):
         return
 
+
     instruction_lower = instruction.lower()
 
-
-current_channel_patterns = (
-        r"\bcurrent\b",
+    current_channel_patterns = (
+        r"\bin the current channel\b",
+        r"\bto the current channel\b",
         r"\bcurrent channel\b",
-        r"\bthe current channel\b",
         r"\bhere\b",
         r"\bin this channel\b",
         r"\bto this channel\b",
-        r"\bin the current channel\b",
-        r"\bto the current channel\b",
         r"\bin the same channel\b",
         r"\bto the same channel\b",
         r"\bin this text channel\b",
         r"\bto this text channel\b",
         r"\bin the channel i'm in\b",
-        r"\bin the channel i am in\b"
+        r"\bin the channel i am in\b",
     )
 
     refers_to_current_channel = any(
         re.search(pattern, instruction_lower)
         for pattern in current_channel_patterns
     )
+
 
     # Load this staff member's personal memories and this server's
     # shared/behavioral memories.
