@@ -1779,6 +1779,167 @@ async def on_message(message):
 
         return
 
+    
+    # =========================================================
+    # CLEAR CHANNEL MESSAGES
+    # =========================================================
+    
+    if action_type == "clear_messages":
+
+        channel_name = result.get("channel_name", "current")
+        message_count = result.get("message_count", 25)
+
+        try:
+            message_count = int(message_count)
+        except (TypeError, ValueError):
+            await message.reply(
+                "The message count must be a number between 2 and 100."
+            )
+            return
+
+        if not 2 <= message_count <= 100:
+            await message.reply(
+                "You can clear between 2 and 100 messages per request."
+            )
+            return
+
+        if refers_to_current_channel:
+            channel_name = "this channel"
+
+        channel = await find_target_channel(
+            guild,
+            channel_name,
+            message.channel
+        )
+
+        if not channel:
+            await message.reply(
+                "I couldn't find that text channel."
+            )
+            return
+
+        permissions = channel.permissions_for(bot_member)
+
+        if not permissions.view_channel:
+            await message.reply(
+                "I don't have permission to view that channel."
+            )
+            return
+
+        if not permissions.read_message_history:
+            await message.reply(
+                "I don't have permission to read message history "
+                "in that channel."
+            )
+            return
+
+        if not permissions.manage_messages:
+            await message.reply(
+                "I need the Manage Messages permission "
+                "in that channel to clear messages."
+            )
+            return
+
+        try:
+            # Gather the requested messages before confirmation.
+            # Exclude the command message itself.
+            messages = [
+                msg
+                async for msg in channel.history(
+                    limit=message_count + 1
+                )
+                if msg.id != message.id
+            ][:message_count]
+
+        except discord.Forbidden:
+            await message.reply(
+                "Discord denied access to that channel's message history."
+            )
+            return
+
+        except discord.HTTPException as error:
+            await message.reply(
+                f"Discord returned an error while reading messages: {error}"
+            )
+            return
+
+        if not messages:
+            await message.reply(
+                f"There are no messages to clear in **#{channel.name}**."
+            )
+            return
+
+        cutoff = discord.utils.utcnow() - timedelta(days=14)
+
+        recent_messages = [
+            msg for msg in messages
+            if msg.created_at > cutoff
+        ]
+
+        skipped_count = len(messages) - len(recent_messages)
+
+        if not recent_messages:
+            await message.reply(
+                f"No messages in **#{channel.name}** can be bulk-deleted. "
+                f"I skipped {skipped_count} message(s) that are "
+                "14 days old or older."
+            )
+            return
+
+        confirmed = await get_confirmation(
+            message,
+            f"Clear **{len(recent_messages)}** message(s) "
+            f"from **#{channel.name}**?\n\n"
+            f"Messages older than 14 days will be skipped. "
+            f"Requested: {message_count}. "
+            f"Eligible: {len(recent_messages)}. "
+            f"Skipped: {skipped_count}."
+        )
+
+        if not confirmed:
+            return
+
+        # Check permissions again after confirmation.
+        permissions = channel.permissions_for(bot_member)
+
+        if not permissions.manage_messages:
+            await message.reply(
+                "I no longer have permission to manage messages "
+                "in that channel."
+            )
+            return
+
+        try:
+            if len(recent_messages) == 1:
+                await recent_messages[0].delete(
+                    reason=f"Message clear requested by {message.author}"
+                )
+            else:
+                await channel.delete_messages(
+                    recent_messages,
+                    reason=f"Message clear requested by {message.author}"
+                )
+
+            await message.reply(
+                f"Successfully deleted **{len(recent_messages)}** "
+                f"message(s) from **#{channel.name}**. "
+                f"Skipped {skipped_count} message(s) that were "
+                "14 days old or older."
+            )
+
+        except discord.Forbidden:
+            await message.reply(
+                "Discord denied permission to delete those messages."
+            )
+
+        except discord.HTTPException as error:
+            await message.reply(
+                f"Discord returned an error while deleting messages: {error}"
+            )
+
+        return
+
+
     # =====================================================
     # SEND CHANNEL MESSAGE
     # =====================================================
