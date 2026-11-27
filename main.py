@@ -218,6 +218,76 @@ async def handle_explicit_memory_request(message, instruction):
         return True
 
     instruction = instruction.strip()
+    
+    # Reply command: "write that down"
+    write_that_down_match = re.fullmatch(
+        r"(?:please\s+)?write\s+that\s+down[.!?]*",
+        instruction,
+        flags=re.IGNORECASE
+    )
+
+    if write_that_down_match:
+
+        # This command must be used as a reply.
+        if not message.reference or not message.reference.message_id:
+            await message.reply(
+                "Please reply to the message you want me to remember "
+                "and say 'write that down'."
+            )
+            return True
+
+        try:
+            # Use the referenced message if Discord already resolved it.
+            referenced_message = message.reference.resolved
+
+            # If it wasn't resolved, fetch the original message.
+            if not isinstance(referenced_message, discord.Message):
+                referenced_message = await message.channel.fetch_message(
+                    message.reference.message_id
+                )
+
+            memory_content = referenced_message.content.strip()
+
+            if not memory_content:
+                await message.reply(
+                    "That message doesn't contain text I can save."
+                )
+                return True
+
+            if len(memory_content) > 2000:
+                await message.reply(
+                    "That message is too long to save. "
+                    "Please use a message with 2,000 characters or fewer."
+                )
+                return True
+
+            # Save to the person who issued the command.
+            memory_id = await save_memory(
+                message.guild.id,
+                message.author.id,
+                memory_content,
+                category="personal",
+                protected=False
+            )
+
+            await message.reply(
+                "Certainly. I've saved the replied-to message "
+                "to your personal memory. "
+                f"(Memory ID: `{memory_id}`)"
+            )
+
+        except Exception as error:
+            print(
+                f"WRITE THAT DOWN ERROR: "
+                f"{type(error).__name__}: {error}"
+            )
+
+            await message.reply(
+                "I couldn't retrieve or save that message."
+            )
+
+        return True
+
 
     # Explicit category syntax:
     # Remember as personal: ...
