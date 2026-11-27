@@ -82,6 +82,44 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "request_message_clear",
+            "description": (
+                "Prepare a request to delete messages from a Discord "
+                "text channel. The staff member must specify a channel "
+                "or use the current channel. Delete 25 messages by "
+                "default if no amount is specified. The requested amount "
+                "must be between 2 and 100 messages. Messages older "
+                "than 14 days cannot be bulk-deleted and must be skipped."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_name": {
+                        "type": "string",
+                        "description": (
+                            "The channel name, channel mention, or "
+                            "'current' for the current channel."
+                        )
+                    },
+                    "message_count": {
+                        "type": "integer",
+                        "minimum": 2,
+                        "maximum": 100,
+                        "description": (
+                            "Number of messages to delete. "
+                            "Use 25 if the staff member did not "
+                            "specify an amount. Maximum 100."
+                        )
+                    }
+                },
+                "required": ["channel_name", "message_count"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "request_member_ban",
             "description": (
                 "Prepare a permanent ban request. The target can be an "
@@ -177,6 +215,7 @@ ACTION_TOOLS = {
     "request_role_assignment": "assign_role",
     "request_role_removal": "remove_role",
     "request_channel_message": "send_message",
+    "request_message_clear": "clear_messages",
     "request_member_ban": "ban_member",
     "request_member_unban": "unban_member",
     "request_member_timeout": "timeout_member",
