@@ -1490,7 +1490,10 @@ async def on_message(message):
     instruction_lower = instruction.lower()
 
 
-    current_channel_patterns = (
+current_channel_patterns = (
+        r"\bcurrent\b",
+        r"\bcurrent channel\b",
+        r"\bthe current channel\b",
         r"\bhere\b",
         r"\bin this channel\b",
         r"\bto this channel\b",
