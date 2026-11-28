@@ -1244,6 +1244,7 @@ async def find_target_channel(guild, channel_name, current_channel):
 
     current_channel_phrases = (
         "here",
+        "current",
         "this",
         "this channel",
         "the channel",
@@ -1274,12 +1275,12 @@ async def find_target_channel(guild, channel_name, current_channel):
         except discord.HTTPException:
             return None
 
-    for channel in guild.text_channels:
+    for channel in guild.channels:
         if channel.name.lower() == search:
             return channel
 
     matches = [
-        channel for channel in guild.text_channels
+        channel for channel in guild.channels
         if search in channel.name.lower()
     ]
 
