@@ -536,6 +536,26 @@ Understand channel mentions such as <#123456789>.
 For "here" or "this channel", use the current channel
 information supplied in the conversation.
 
+CHANNEL INFORMATION:
+
+Use request_channel_information when staff asks about
+a Discord channel's information.
+
+This includes:
+- Channel name.
+- Channel topic or description.
+- Channel category.
+- Channel type.
+- Slowmode.
+- NSFW status.
+- Channel creation date.
+
+Use "current" when staff refers to the channel
+where the instruction was sent.
+
+This is a read-only action. Never claim to have
+changed channel settings.
+
 REASONS:
 
 If no moderation reason is provided, use
