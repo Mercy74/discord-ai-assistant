@@ -639,6 +639,12 @@ async def ask_groq(message: str) -> dict:
                     "type": action_type,
                     "channel_name": arguments["channel_name"],
                     "message_content": arguments["message_content"]
+                }            
+                
+            if action_type == "channel_information":
+                return {
+                    "type": action_type,
+                    "channel_name": arguments["channel_name"]
                 }
                 
             if action_type == "clear_messages":
