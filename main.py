@@ -1963,19 +1963,31 @@ async def on_message(message):
             )
             return
 
-        if not channel.permissions_for(bot_member).view_channel:
+        permissions = channel.permissions_for(bot_member)
+
+        if not permissions.view_channel:
             await message.reply(
                 "I don't have permission to view that channel."
             )
             return
 
         channel_type = str(channel.type).replace("_", " ").title()
-        category = channel.category.name if channel.category else "None"
-        topic = getattr(channel, "topic", None) or "No topic set."
+
+        category = (
+            channel.category.name
+            if getattr(channel, "category", None)
+            else "None"
+        )
+
+        topic = (
+            getattr(channel, "topic", None)
+            or "No topic set."
+        )
+
         slowmode = getattr(channel, "slowmode_delay", None)
 
         if slowmode is None:
-            slowmode_text = "Not available"
+            slowmode_text = "Not applicable"
         elif slowmode == 0:
             slowmode_text = "Disabled"
         else:
@@ -1986,10 +1998,16 @@ async def on_message(message):
         else:
             nsfw = "Not applicable"
 
-        created = channel.created_at.strftime("%B %d, %Y")
+        created_at = getattr(channel, "created_at", None)
+
+        created = (
+            created_at.strftime("%B %d, %Y")
+            if created_at
+            else "Unavailable"
+        )
 
         await message.reply(
-            f"**Channel Information: #{channel.name}**\n"
+            f"**Channel Information: {channel.name}**\n"
             f"**Type:** {channel_type}\n"
             f"**Category:** {category}\n"
             f"**Topic:** {topic}\n"
