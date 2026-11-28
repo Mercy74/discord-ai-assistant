@@ -82,6 +82,34 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "request_channel_information",
+            "description": (
+                "Prepare a read-only request to retrieve information "
+                "about a Discord channel. Use this when staff asks "
+                "about a channel's information, topic, category, "
+                "type, slowmode, NSFW setting, or creation date. "
+                "Use 'current' when staff refers to the channel "
+                "where the instruction was sent."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_name": {
+                        "type": "string",
+                        "description": (
+                            "The channel name, channel mention, "
+                            "or 'current' for the current channel."
+                        )
+                    }
+                },
+                "required": ["channel_name"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "request_message_clear",
             "description": (
                 "Prepare a request to delete messages from a Discord "
@@ -215,6 +243,7 @@ ACTION_TOOLS = {
     "request_role_assignment": "assign_role",
     "request_role_removal": "remove_role",
     "request_channel_message": "send_message",
+    "request_channel_information": "channel_information",
     "request_message_clear": "clear_messages",
     "request_member_ban": "ban_member",
     "request_member_unban": "unban_member",
