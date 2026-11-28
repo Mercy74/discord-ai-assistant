@@ -1941,7 +1941,64 @@ async def on_message(message):
 
         return
 
+    
+    # =========================================================
+    # CHANNEL INFORMATION
+    # =========================================================
 
+    if action_type == "channel_information":
+
+        channel_name = result.get("channel_name", "current")
+
+        channel = await find_target_channel(
+            guild,
+            channel_name,
+            message.channel
+        )
+
+        if channel is None:
+            await message.reply(
+                "I couldn't find that channel."
+            )
+            return
+
+        if not channel.permissions_for(bot_member).view_channel:
+            await message.reply(
+                "I don't have permission to view that channel."
+            )
+            return
+
+        channel_type = str(channel.type).replace("_", " ").title()
+        category = channel.category.name if channel.category else "None"
+        topic = getattr(channel, "topic", None) or "No topic set."
+        slowmode = getattr(channel, "slowmode_delay", None)
+
+        if slowmode is None:
+            slowmode_text = "Not available"
+        elif slowmode == 0:
+            slowmode_text = "Disabled"
+        else:
+            slowmode_text = f"{slowmode} seconds"
+
+        if hasattr(channel, "is_nsfw"):
+            nsfw = "Yes" if channel.is_nsfw() else "No"
+        else:
+            nsfw = "Not applicable"
+
+        created = channel.created_at.strftime("%B %d, %Y")
+
+        await message.reply(
+            f"**Channel Information: #{channel.name}**\n"
+            f"**Type:** {channel_type}\n"
+            f"**Category:** {category}\n"
+            f"**Topic:** {topic}\n"
+            f"**Slowmode:** {slowmode_text}\n"
+            f"**NSFW:** {nsfw}\n"
+            f"**Created:** {created}"
+        )
+        return
+
+    
     # =====================================================
     # SEND CHANNEL MESSAGE
     # =====================================================
@@ -2025,6 +2082,7 @@ async def on_message(message):
             )
 
         return
+
 
     # =====================================================
     # BAN MEMBER
